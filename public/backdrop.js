@@ -46,7 +46,7 @@ struct U {
   flash: f32, pad0: f32, pad1: f32, pad2: f32,
   segs: array<vec4f, ${IMPULSE_SEGMENTS}>,
 };
-struct Particle { pos: vec2f, vel: vec2f, heat: f32, rim: f32, pad0: f32, pad1: f32 };
+struct Particle { pos: vec2f, vel: vec2f, heat: f32, rim: f32, gather: f32, pad0: f32 };
 `;
 
 const SIMULATE = /* wgsl */ `${COMMON}
@@ -121,8 +121,8 @@ fn seed(@builtin(global_invocation_id) gid: vec3u) {
   p.vel = vec2f(0.0);
   p.heat = 0.0;
   p.rim = 0.0;
+  p.gather = 0.0;
   p.pad0 = 0.0;
-  p.pad1 = 0.0;
   particles[i] = p;
 }
 
@@ -140,11 +140,17 @@ fn simulate(@builtin(global_invocation_id) gid: vec3u) {
   let home = u.headCenter + (tgt.xy + jitter * 0.006) * u.headScale;
 
   let f = flow(p.pos, u.time) * 0.06;
-  // Drifting, velocity relaxes toward the flow; gathered, a slightly
-  // underdamped spring holds each particle at home with a little flow left in.
+  // Drifting, velocity relaxes toward the flow. Each particle sets off for
+  // home at its own moment, so the head draws itself in over a second and a
+  // half instead of collapsing as one cloud. A critically damped spring then
+  // holds it exactly at home, with no flow left in and no overshoot, so the
+  // outline stays crisp.
+  let start = rand(h ^ 0x2c1b3c6du) * 0.6;
+  let g = smoothstep(start, start + 0.4, u.gather);
   let free = (f - p.vel) * 1.4;
-  let spring = (home - p.pos) * 22.0 - p.vel * 7.0 + f * 3.0;
-  var acc = mix(free, spring, u.gather);
+  let k = 64.0 * g;
+  let spring = (home - p.pos) * k - p.vel * 2.0 * sqrt(k);
+  var acc = free * (1.0 - g) + spring;
 
   if (u.pointerActive > 0.0) {
     let r = p.pos - u.pointer;
@@ -180,6 +186,7 @@ fn simulate(@builtin(global_invocation_id) gid: vec3u) {
   p.pos += p.vel * dt;
   p.heat = heat;
   p.rim = tgt.z;
+  p.gather = g;
 
   // Strays respawn anywhere on screen.
   if (any(abs(p.pos) > vec2f(u.aspect + 0.25, 1.25))) {
@@ -202,9 +209,10 @@ fn vs(@builtin(vertex_index) i: u32) -> VOut {
   let p = particles[i];
   let speed = clamp(length(p.vel) * 2.2, 0.0, 1.0);
   let metal = mix(vec3f(0.26, 0.27, 0.30), vec3f(0.80, 0.82, 0.88), speed);
-  // Gathered, the field is about five times denser, so each particle dims:
-  // the rim stays bright metal and the core goes dark, as in the icon.
-  let lit = metal * mix(0.6, p.rim * 0.85, u.gather);
+  // The gathered field is about five times denser, so a particle dims as it
+  // heads home: the rim stays bright metal and the core goes dark, as in the
+  // icon.
+  let lit = metal * mix(0.6, p.rim * 0.85, p.gather);
   let hot = vec3f(1.0, 0.32, 0.14) * p.heat * 4.0 + vec3f(1.0, 0.86, 0.72) * p.heat * p.heat * 3.0;
   var o: VOut;
   o.clip = vec4f(p.pos.x / u.aspect, p.pos.y, 0.0, 1.0);
@@ -733,7 +741,7 @@ async function start() {
     const idle = (performance.now() - pointer.at) / 1000;
     return {
       flash: bolt?.kind === 'signature' ? light : light * 0.4,
-      gather: smoothstep(4.6, 7.8, c) * (1 - smoothstep(11.35, 11.9, c)),
+      gather: smoothstep(4.4, 7.0, c) * (1 - smoothstep(11.35, 11.9, c)),
       light,
       pointer: pointer.inside ? 1 - smoothstep(1.2, 2, idle) : 0,
       scatter: c >= 11.5 && c < 11.9 ? (1 - (c - 11.5) / 0.4) * 1.4 : 0,
