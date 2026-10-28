@@ -26,6 +26,9 @@ const TARGETS = 1 << 16;
 const MAX_SEGMENTS = 512;
 const IMPULSE_SEGMENTS = 24;
 const DPR_CAP = 1.5;
+// The head's height as a share of the screen's in the desktop layout (84vh),
+// where its bolts were tuned.
+const HEAD_SCALE = 0.84;
 const UNIFORM_FLOATS = 20 + IMPULSE_SEGMENTS * 4;
 
 // The bolt-shaped split between the head's two halves, in the icon's
@@ -43,7 +46,7 @@ struct U {
   pointer: vec2f, pointerActive: f32, scatter: f32,
   strike: f32, segCount: u32, headScale: f32, count: u32,
   headCenter: vec2f, intensity: f32, boltIntensity: f32,
-  flash: f32, pad0: f32, pad1: f32, pad2: f32,
+  flash: f32, headIntensity: f32, boltReach: f32, pad2: f32,
   segs: array<vec4f, ${IMPULSE_SEGMENTS}>,
 };
 struct Particle { pos: vec2f, vel: vec2f, heat: f32, rim: f32, gather: f32, pad0: f32 };
@@ -178,8 +181,11 @@ fn simulate(@builtin(global_invocation_id) gid: vec3u) {
         push = r;
       }
     }
-    acc += normalize(push + 1e-6) * exp(-best / 0.0025) * u.strike * 18.0;
-    heat = max(heat, exp(-best / 0.006) * u.strike);
+    // A bolt at the head pushes and heats by the head's size, so its heat
+    // covers the same share of the head on any screen.
+    let reach = u.boltReach * u.boltReach;
+    acc += normalize(push + 1e-6) * exp(-best / (0.0025 * reach)) * u.strike * 18.0;
+    heat = max(heat, exp(-best / (0.006 * reach)) * u.strike);
   }
 
   p.vel += acc * dt;
@@ -209,14 +215,15 @@ fn vs(@builtin(vertex_index) i: u32) -> VOut {
   let p = particles[i];
   let speed = clamp(length(p.vel) * 2.2, 0.0, 1.0);
   let metal = mix(vec3f(0.26, 0.27, 0.30), vec3f(0.80, 0.82, 0.88), speed);
-  // The gathered field is about five times denser, so a particle dims as it
-  // heads home: the rim stays bright metal and the core goes dark, as in the
-  // icon.
+  // A particle dims as it heads home: the rim stays bright metal and the core
+  // goes dark, as in the icon. Its brightness follows the screen's particle
+  // density while it drifts and the head's once gathered, so the formed head
+  // looks the same however large it is laid out.
   let lit = metal * mix(0.6, p.rim * 0.85, p.gather);
   let hot = vec3f(1.0, 0.32, 0.14) * p.heat * 4.0 + vec3f(1.0, 0.86, 0.72) * p.heat * p.heat * 3.0;
   var o: VOut;
   o.clip = vec4f(p.pos.x / u.aspect, p.pos.y, 0.0, 1.0);
-  o.color = (lit + hot) * u.intensity;
+  o.color = (lit + hot) * mix(u.intensity, u.headIntensity, p.gather);
   return o;
 }
 
@@ -584,9 +591,13 @@ async function start() {
     const scene = texture(width, height).createView();
     const bloomA = texture(bw, bh).createView();
     const bloomB = texture(bw, bh).createView();
+    // The bloom's tap step is a share of the head's size, so a small head (a
+    // phone's) glows as tightly as a large one; it never widens past 1.6
+    // texels, where the 9-tap blur would start to leave gaps.
+    const spread = Math.min((head.scale * height) / 700, 1.6);
     device.queue.writeBuffer(passUniforms[0], 0, new Float32Array([1 / width, 1 / height, 0, 0]));
-    device.queue.writeBuffer(passUniforms[1], 0, new Float32Array([0, 0, 1.6 / bw, 0]));
-    device.queue.writeBuffer(passUniforms[2], 0, new Float32Array([0, 0, 0, 1.6 / bh]));
+    device.queue.writeBuffer(passUniforms[1], 0, new Float32Array([0, 0, spread / bw, 0]));
+    device.queue.writeBuffer(passUniforms[2], 0, new Float32Array([0, 0, 0, spread / bh]));
     const pass = (pipeline, view, uniform) =>
       device.createBindGroup({
         entries: [
@@ -672,7 +683,8 @@ async function start() {
     for (let i = 1; i < coarse.length; i += 1) {
       f32.set([...coarse[i - 1], ...coarse[i]], 20 + (i - 1) * 4);
     }
-    bolt = { at, drawn, impulse, impulseSegments: coarse.length - 1, kind, light };
+    const reach = kind === 'ambient' ? 1 : head.scale / HEAD_SCALE;
+    bolt = { at, drawn, impulse, impulseSegments: coarse.length - 1, kind, light, reach };
   }
 
   // Lightning flickers: three quick flashes over a fading afterglow.
@@ -720,6 +732,8 @@ async function start() {
     f32[14] = 1.25 * Math.min(Math.max((width * height) / count / 4.5, 0.55), 1.8);
     f32[15] = phase.light;
     f32[16] = phase.flash;
+    f32[17] = (1.25 * (head.scale * height) ** 2) / count / 2;
+    f32[18] = bolt ? bolt.reach : 1;
     device.queue.writeBuffer(uniforms, 0, uniformData);
   }
 
