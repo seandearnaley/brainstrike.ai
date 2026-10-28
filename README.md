@@ -1,36 +1,32 @@
-This is a [Next.js](https://nextjs.org/) project bootstrapped with [`create-next-app`](https://github.com/vercel/next.js/tree/canary/packages/create-next-app).
+# brainstrike.ai
 
-## Getting Started
+The download page for the Brainstrike desktop app: one static HTML file, no
+framework and no dependencies.
 
-First, run the development server:
+`npm run build` (Node 24) runs `build.mjs`, which writes `dist/index.html`.
+It reads the newest published release of
+[seandearnaley/brainstrike-releases](https://github.com/seandearnaley/brainstrike-releases/releases),
+prereleases included, that carries a `release-manifest.json` asset, validates
+that manifest against schema v2 (the shape written by
+`scripts/generate-release-manifest.mjs` in the brainstrike monorepo) and links
+every download it lists.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+- No release with a manifest yet: the page says the first beta is coming soon.
+- A manifest that fails validation, or a network or GitHub API error: the build
+  fails. It never guesses filenames.
+
+Vercel builds `main` with `npm run build` and serves `dist/`. A new release
+appears only after the next build; the brainstrike repo holds a Vercel deploy
+hook for `main` as the Actions secret `VERCEL_SITE_DEPLOY_HOOK` for that.
+
+## Environment
+
+| Variable | Use |
+| --- | --- |
+| `GITHUB_TOKEN` | Optional. Sent to the GitHub API when set. |
+| `RELEASE_MANIFEST_FILE` | Optional. Path to a local manifest to render instead of querying GitHub, for previewing the download state before a release exists. |
+
+```sh
+RELEASE_MANIFEST_FILE=./sample-manifest.json npm run build
+open dist/index.html
 ```
-
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/basic-features/font-optimization) to automatically optimize and load Inter, a custom Google Font.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js/) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/deployment) for more details.
