@@ -2,31 +2,37 @@
 //
 // The page is built from the newest published release (prereleases included)
 // of seandearnaley/brainstrike-releases that carries a release-manifest.json
-// asset. The manifest is validated against schema v2, the shape written by
+// asset. Releases come from the public Atom feed, newest first, so the build
+// makes no GitHub API calls. A manifest download that returns 404 means that
+// release is still publishing, and the next entry is tried. The manifest is
+// validated against schema v2, the shape written by
 // scripts/generate-release-manifest.mjs in the brainstrike monorepo. With no
-// such release the page says the first beta is coming soon. A manifest that
-// fails validation, or any network or API error, fails the build.
+// release carrying a manifest the page says the first beta is coming soon. A
+// manifest that fails validation, any other HTTP error or a network error
+// fails the build.
 //
 // Environment:
-//   GITHUB_TOKEN           optional; sent to the GitHub API when set.
 //   RELEASE_MANIFEST_FILE  optional; render this local manifest file instead of
-//                          querying GitHub, to preview the download state.
+//                          reading GitHub, to preview the download state.
 import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 const DIST = path.join(import.meta.dirname, 'dist');
 
-const RELEASES_API =
-  'https://api.github.com/repos/seandearnaley/brainstrike-releases/releases?per_page=20';
 const MANIFEST_ASSET = 'release-manifest.json';
 const ARTIFACT_BASE_URL =
   'https://github.com/seandearnaley/brainstrike-releases/releases/download/';
 const RELEASES_HUB_URL = 'https://github.com/seandearnaley/brainstrike-releases/releases';
+const RELEASES_FEED = `${RELEASES_HUB_URL}.atom`;
+const FEED_RELEASE_LINK =
+  /<link\b[^>]*\bhref="https:\/\/github\.com\/seandearnaley\/brainstrike-releases\/releases\/tag\/([^"]+)"/gu;
 
 const PLATFORM_BY_PACKAGE = { appimage: 'linux', dmg: 'macos', nsis: 'windows' };
 const ARCHITECTURES = new Set(['arm64', 'universal', 'x64']);
-// v<major>.<minor>.<patch>, plus an optional prerelease part (v0.1.0-beta.1).
-const TAG = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$/u;
+// The generator's tag rule: v<major>.<minor>.<patch>, optionally -alpha.<n> or
+// -beta.<n>. The prerelease id is the manifest's channel; no id means stable.
+const TAG = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(alpha|beta)\.(0|[1-9]\d*))?$/u;
+const CHANNEL_LABELS = { alpha: 'Alpha', beta: 'Beta', stable: null };
 const SOURCE_COMMIT = /^[a-f0-9]{40}$/u;
 const DIGEST = /^sha256:([a-f0-9]{64})$/u;
 
@@ -76,7 +82,9 @@ function validateManifest(manifest, source) {
   expectKeys(manifest, ['channel', 'distribution', 'latest', 'product', 'schemaVersion'], where('manifest'));
   expectEqual(manifest.schemaVersion, 2, where('schemaVersion'));
   expectEqual(manifest.product, 'Brainstrike', where('product'));
-  expectEqual(manifest.channel, 'stable', where('channel'));
+  if (!Object.hasOwn(CHANNEL_LABELS, manifest.channel)) {
+    fail(`${where('channel')} ${JSON.stringify(manifest.channel)} is not alpha, beta or stable.`);
+  }
   expectKeys(manifest.distribution, ['artifactBaseUrl', 'releasesHubUrl'], where('distribution'));
   expectEqual(manifest.distribution.artifactBaseUrl, ARTIFACT_BASE_URL, where('distribution.artifactBaseUrl'));
   expectEqual(manifest.distribution.releasesHubUrl, RELEASES_HUB_URL, where('distribution.releasesHubUrl'));
@@ -84,10 +92,14 @@ function validateManifest(manifest, source) {
   const { latest } = manifest;
   expectKeys(latest, ['assets', 'publishedAt', 'sourceCommit', 'tag', 'version'], where('latest'));
   const { tag, version } = latest;
-  if (typeof tag !== 'string' || !TAG.test(tag)) {
-    fail(`${where('latest.tag')} ${JSON.stringify(tag)} is not v<major>.<minor>.<patch>[-prerelease].`);
+  const tagMatch = typeof tag === 'string' ? TAG.exec(tag) : null;
+  if (tagMatch === null) {
+    fail(
+      `${where('latest.tag')} ${JSON.stringify(tag)} is not v<major>.<minor>.<patch>, optionally -alpha.<n> or -beta.<n>.`
+    );
   }
   expectEqual(version, tag.slice(1), where('latest.version'));
+  expectEqual(manifest.channel, tagMatch[4] ?? 'stable', `${where('channel')} for version ${version}`);
   if (typeof latest.sourceCommit !== 'string' || !SOURCE_COMMIT.test(latest.sourceCommit)) {
     fail(`${where('latest.sourceCommit')} must be a full 40-hex Git commit id.`);
   }
@@ -136,14 +148,18 @@ function validateManifest(manifest, source) {
   return manifest;
 }
 
-async function get(url, headers) {
+// Returns the response body, or null for a 404 when notFoundIsNull is set.
+async function get(url, { notFoundIsNull = false } = {}) {
   let response;
   try {
-    response = await fetch(url, { headers });
+    response = await fetch(url, { headers: { 'User-Agent': 'brainstrike.ai-build' } });
   } catch (error) {
     fail(`GET ${url} failed: ${error.cause?.message ?? error.message}`);
   }
   const body = await response.text();
+  if (response.status === 404 && notFoundIsNull) {
+    return null;
+  }
   if (!response.ok) {
     fail(`GET ${url} returned HTTP ${response.status}: ${body.slice(0, 300)}`);
   }
@@ -152,32 +168,25 @@ async function get(url, headers) {
 
 // Returns the newest published manifest, or null when no release carries one.
 async function loadPublishedManifest() {
-  const headers = {
-    Accept: 'application/vnd.github+json',
-    'User-Agent': 'brainstrike.ai-build',
-    'X-GitHub-Api-Version': '2022-11-28',
-  };
-  if (process.env.GITHUB_TOKEN) {
-    headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+  const feed = await get(RELEASES_FEED);
+  if (!/<feed\b/u.test(feed)) {
+    fail(`${RELEASES_FEED} did not return an Atom feed.`);
   }
-  const releases = parseJson(await get(RELEASES_API, headers), RELEASES_API);
-  if (!Array.isArray(releases)) {
-    fail(`${RELEASES_API} did not return an array of releases.`);
+  for (const [, encodedTag] of feed.matchAll(FEED_RELEASE_LINK)) {
+    const tag = decodeURIComponent(encodedTag);
+    const source = `${tag}/${MANIFEST_ASSET}`;
+    const body = await get(new URL(`${encodeURIComponent(tag)}/${MANIFEST_ASSET}`, ARTIFACT_BASE_URL).href, {
+      notFoundIsNull: true,
+    });
+    if (body === null) {
+      console.log(`build.mjs: ${source} returned 404 (still publishing); trying the next release.`);
+      continue;
+    }
+    const manifest = validateManifest(parseJson(body, source), source);
+    expectEqual(manifest.latest.tag, tag, `${source}: latest.tag`);
+    return manifest;
   }
-  const release = releases
-    .filter((candidate) => !candidate.draft && candidate.assets.some((a) => a.name === MANIFEST_ASSET))
-    .sort((left, right) => Date.parse(right.published_at) - Date.parse(left.published_at))[0];
-  if (!release) {
-    return null;
-  }
-  const asset = release.assets.find((a) => a.name === MANIFEST_ASSET);
-  const source = `${release.tag_name}/${MANIFEST_ASSET}`;
-  const manifest = validateManifest(
-    parseJson(await get(asset.browser_download_url, { 'User-Agent': headers['User-Agent'] }), source),
-    source
-  );
-  expectEqual(manifest.latest.tag, release.tag_name, `${source}: latest.tag`);
-  return manifest;
+  return null;
 }
 
 const escapeHtml = (value) =>
@@ -192,7 +201,8 @@ const formatSize = (bytes) => `${(bytes / 1_000_000).toFixed(1)} MB`;
 function renderDownloads(manifest) {
   const { assets, publishedAt, tag, version } = manifest.latest;
   const releasePage = `${manifest.distribution.releasesHubUrl}/tag/${encodeURIComponent(tag)}`;
-  const beta = version.includes('-') ? ' <span class="badge">Beta</span>' : '';
+  const label = CHANNEL_LABELS[manifest.channel];
+  const badge = label ? ` <span class="badge">${label}</span>` : '';
   const sections = PLATFORMS.map(({ id, label }) => {
     const items = assets
       .filter((asset) => asset.platform === id)
@@ -215,7 +225,7 @@ ${items.join('\n')}
 </ul>${note}
 </section>`;
   });
-  return `<p>Version ${escapeHtml(version)}${beta} · Released <time datetime="${publishedAt}">${publishedAt.slice(0, 10)}</time></p>
+  return `<p>Version ${escapeHtml(version)}${badge} · Released <time datetime="${publishedAt}">${publishedAt.slice(0, 10)}</time></p>
 <p><a href="${escapeHtml(releasePage)}">Release notes on GitHub</a></p>
 ${sections.filter(Boolean).join('\n')}`;
 }
