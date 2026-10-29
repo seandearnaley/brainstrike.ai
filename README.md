@@ -33,12 +33,14 @@ hook for `main` as the Actions secret `VERCEL_SITE_DEPLOY_HOOK` for that.
   and says Brainstrike is a desktop app.
 - **Read the release notes** opens a dialog with the notes and every
   download's SHA-256 checksum.
-- `public/backdrop.js` draws the backdrop: about a million particles (a
-  quarter of that on phones) gather into the Brainstrike head every 15 seconds
-  and a bolt strikes down its split. The head is sampled from the page's
-  still mark, so the CSS for `.still-mark` decides where it forms. Without
-  WebGPU the page keeps that still mark, and the console says why; reduced
-  motion draws one formed frame.
+- `public/backdrop.js` draws the backdrop: a wall of small glass tiles that
+  keeps time to a silent 96 BPM. Every 15 seconds a sweep flips the
+  Brainstrike bolt onto it in orange, lightning strikes down the bolt and a
+  wave flips the wall out from it; the pointer tilts the tiles near it. The
+  bolt goes where the page's still mark is laid out, so the CSS for
+  `.still-mark` decides where it is drawn. Without WebGPU the page keeps that
+  still mark, and the console says why; reduced motion draws one frame with
+  the bolt written.
 
 ## Environment
 

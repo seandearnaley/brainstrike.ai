@@ -278,8 +278,8 @@ const formatDate = (iso) =>
   );
 
 // The app icon's two shapes (assets/icons/icon.svg in the brainstrike repo):
-// the head, split by a bolt, and its metal rim. The backdrop samples them
-// from the still mark, so they are written into the page once.
+// the head, split by a bolt, and its metal rim. The still mark shows them
+// without WebGPU, and the backdrop draws its bolt where the mark is laid out.
 const LOGO_HEAD =
   'M612 134C493 103 373 136 290 218C223 284 197 360 214 448L149 571Q145 578 152 582L210 616L225 720C229 753 245 769 280 769H336L494 473L342 474Z M640 146C749 190 821 281 821 396C821 478 777 548 730 616C710 646 704 676 712 710L736 808L418 930L380 795C377 782 370 771 357 769L622 417Q628 409 619 408L486 405Z';
 const LOGO_RIM =
@@ -288,7 +288,7 @@ const metal = (id) => `<linearGradient id="${id}" gradientUnits="userSpaceOnUse"
 <stop stop-color="#f4f4f3"/><stop offset=".25" stop-color="#cececd"/><stop offset=".5" stop-color="#929291"/><stop offset=".75" stop-color="#515150"/><stop offset="1" stop-color="#292928"/>
 </linearGradient>`;
 const brandMark = `<svg viewBox="0 0 1024 1024" aria-hidden="true"><defs>${metal('mark-metal')}</defs><path d="${LOGO_HEAD}" fill="url(#mark-metal)"/></svg>`;
-const stillMark = `<svg class="still-mark" viewBox="0 0 1024 1024" aria-hidden="true"><defs>${metal('still-metal')}</defs><path data-shape="head" d="${LOGO_HEAD}" fill="#0b0c0d"/><path data-shape="rim" d="${LOGO_RIM}" fill="url(#still-metal)" fill-rule="evenodd"/></svg>`;
+const stillMark = `<svg class="still-mark" viewBox="0 0 1024 1024" aria-hidden="true"><defs>${metal('still-metal')}</defs><path d="${LOGO_HEAD}" fill="#0b0c0d"/><path d="${LOGO_RIM}" fill="url(#still-metal)" fill-rule="evenodd"/></svg>`;
 const downloadIcon =
   '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>';
 

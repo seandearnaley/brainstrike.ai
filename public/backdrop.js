@@ -1,35 +1,54 @@
-// Neural storm: the animated backdrop of brainstrike.ai, drawn with WebGPU.
+// Flip field: the animated backdrop of brainstrike.ai, drawn with WebGPU.
 //
-// A compute shader moves up to about a million particles through a curl-noise
-// flow field. Every 15 seconds they gather into the Brainstrike head, a bolt
-// strikes down the split in the head, and they scatter again; smaller bolts
-// strike while they drift, and the pointer stirs the field. Particles and
-// bolts add into a half-float target, then a bloom and tone-map pass draws the
-// canvas.
+// A wall of small metal tiles, seen in gentle perspective, keeps time to a
+// silent 96 BPM. Kicks ripple across it and hi-hats glint off single tiles.
+// Once a cycle a sweep crosses the screen and flips the tiles under the
+// Brainstrike bolt to their orange faces; on the next downbeat lightning
+// strikes down the bolt and a wave flips the wall out from it; then the bolt
+// flips back, top to bottom. Tiles near the pointer turn to face it.
 //
-// The head comes from the page's still mark (.still-mark): its two outlines
-// are sampled into target points, and the particles gather where the mark is
-// laid out, so CSS alone decides where the head sits.
+// Every tile's angle is a function of the cycle time, so the vertex shader
+// works it out and nothing is simulated. The tiles render with 4x MSAA into a
+// half-float target, lit by a procedural studio of soft boxes; a bloom and
+// tone-map pass draws the canvas.
+//
+// The bolt is drawn where the page's still mark (.still-mark) is laid out, so
+// CSS alone decides where it sits.
 //
 // Without WebGPU, or when it fails, the page keeps its still backdrop and the
-// console says why. Reduced motion draws one formed frame. A hidden tab stops
-// the loop.
+// console says why. Reduced motion draws one frame with the bolt written. A
+// hidden tab stops the loop.
 
 const canvas = document.querySelector('canvas.backdrop');
 const still = document.querySelector('.still-mark');
 const root = document.documentElement;
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
 
-const CYCLE = 15; // seconds: drift, gather, strike, hold, scatter
-const START = 3; // the first cycle starts here, so the head forms within ~5 s
-const TARGETS = 1 << 16;
-const MAX_SEGMENTS = 512;
-const IMPULSE_SEGMENTS = 24;
+// The wall keeps a silent 96 BPM, and a cycle is six bars.
+const BEAT = 60 / 96;
+const CYCLE = 24 * BEAT;
+const START = 4; // the page opens here, so the first sweep starts within a second
+const SWEEP_AT = 8 * BEAT; // bar three: the sweep crosses the screen in seven beats
+const SWEEP_LEN = 7 * BEAT;
+const STRIKE_AT = 16 * BEAT; // bar five's downbeat
+const ERASE_AT = 20 * BEAT; // bar six: the bolt flips back over two beats
+const ERASE_LEN = 2 * BEAT;
+const WAVE_SPEED = 1.8; // the strike's wave, in head heights per second
+
+// The camera, and the wall turned so its right side comes toward it.
+const DISTANCE = 3.6;
+const FOCAL = 1 / Math.tan(0.26); // a 30° vertical field of view
+const YAW = -0.17;
+const PITCH = -0.1;
+const NEAR = 0.5;
+const FAR = 12;
+
+const SAMPLES = 4;
 const DPR_CAP = 1.5;
-// The head's height as a share of the screen's in the desktop layout (84vh),
-// where its bolts were tuned.
-const HEAD_SCALE = 0.84;
-const UNIFORM_FLOATS = 20 + IMPULSE_SEGMENTS * 4;
+const MAX_PIXELS = 2.2e6; // keeps the 4x multisampled targets small on large screens
+const MAX_TILES = 80000;
+const MAX_SEGMENTS = 512;
+const UNIFORM_FLOATS = 36;
 
 // The bolt-shaped split between the head's two halves, in the icon's
 // 1024-unit coordinates (assets/icons/icon.svg in the brainstrike repo).
@@ -40,22 +59,73 @@ const SPLIT = [
   [346, 769],
 ];
 
+const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const add = (a, b, k = 1) => [a[0] + b[0] * k, a[1] + b[1] * k, a[2] + b[2] * k];
+const norm = (a) => {
+  const length = Math.hypot(...a);
+  return a.map((v) => v / length);
+};
+const vec3 = (a) => `vec3f(${a.map((v) => v.toFixed(5)).join(', ')})`;
+
+const WALL_X = [Math.cos(YAW), 0, -Math.sin(YAW)];
+const WALL_Y = [Math.sin(PITCH) * Math.sin(YAW), Math.cos(PITCH), Math.sin(PITCH) * Math.cos(YAW)];
+const WALL_N = [Math.cos(PITCH) * Math.sin(YAW), -Math.sin(PITCH), Math.cos(PITCH) * Math.cos(YAW)];
+
+// The studio the tiles reflect: a key soft box behind the camera, a wide panel
+// light overhead and a warm bounce from the floor. Tiles that tip back catch
+// the panel; tiles that tip forward catch the floor.
+const studioLight = (name, direction, color) => {
+  const c = norm(direction);
+  const x = norm(cross([0, 1, 0], c));
+  return `const ${name} = ${vec3(c)};
+const ${name}_X = ${vec3(x)};
+const ${name}_Y = ${vec3(cross(c, x))};
+const ${name}_COLOR = ${vec3(color)};
+`;
+};
+
 const COMMON = /* wgsl */ `
 struct U {
-  time: f32, dt: f32, aspect: f32, gather: f32,
-  pointer: vec2f, pointerActive: f32, scatter: f32,
-  strike: f32, segCount: u32, headScale: f32, count: u32,
-  headCenter: vec2f, intensity: f32, boltIntensity: f32,
-  flash: f32, headIntensity: f32, boltReach: f32, pad2: f32,
-  segs: array<vec4f, ${IMPULSE_SEGMENTS}>,
+  eye: vec3f, aspect: f32,
+  right: vec3f, focal: f32,
+  up: vec3f, cycle: f32,
+  forward: vec3f, time: f32,
+  wallX: vec3f, unit: f32,
+  wallY: vec3f, half: f32,
+  wallN: vec3f, thick: f32,
+  pointer: vec2f, pointerAmt: f32, boltLight: f32,
+  boltCenter: vec2f, pad0: f32, pad1: f32,
 };
-struct Particle { pos: vec2f, vel: vec2f, heat: f32, rim: f32, gather: f32, pad0: f32 };
+
+fn onWall(p: vec2f, lift: f32) -> vec3f {
+  return u.wallX * p.x + u.wallY * p.y + u.wallN * lift;
+}
+
+fn project(w: vec3f) -> vec4f {
+  let r = w - u.eye;
+  let z = dot(r, u.forward);
+  return vec4f(dot(r, u.right) * u.focal / u.aspect, dot(r, u.up) * u.focal, (z - ${NEAR}) * ${FAR / (FAR - NEAR)}, z);
+}
 `;
 
-const SIMULATE = /* wgsl */ `${COMMON}
+const TILES = /* wgsl */ `${COMMON}
+struct Tile { pos: vec2f, sweep: f32, bolt: f32, dist: f32, along: f32, seed: f32, pad0: f32 };
 @group(0) @binding(0) var<uniform> u: U;
-@group(0) @binding(1) var<storage, read_write> particles: array<Particle>;
-@group(0) @binding(2) var<storage, read> targets: array<vec4f>;
+@group(0) @binding(1) var<storage, read> tiles: array<Tile>;
+
+const PI: f32 = 3.14159265;
+const BEAT: f32 = ${BEAT};
+const SWEEP_AT: f32 = ${SWEEP_AT};
+const SWEEP_LEN: f32 = ${SWEEP_LEN};
+const STRIKE_AT: f32 = ${STRIKE_AT};
+const ERASE_AT: f32 = ${ERASE_AT};
+const ERASE_LEN: f32 = ${ERASE_LEN};
+const WAVE_SPEED: f32 = ${WAVE_SPEED};
+const SPIN_BAND: f32 = 0.22; // head heights from the bolt
+${studioLight('KEY', [-0.3, 0.36, 0.88], [5, 4.8, 4.5])}
+${studioLight('PANEL', [-0.1, 0.87, 0.48], [3.4, 3.5, 3.7])}
+${studioLight('WARM', [-0.15, -0.45, 0.88], [1.2, 0.32, 0.1])}
 
 fn hash(x: u32) -> u32 {
   var v = x;
@@ -71,165 +141,220 @@ fn rand(x: u32) -> f32 {
   return f32(hash(x) >> 8u) / 16777216.0;
 }
 
-fn lattice(c: vec2f) -> vec2f {
-  let i = vec2i(c);
-  let h = hash((bitcast<u32>(i.x) * 0x8da6b343u) ^ (bitcast<u32>(i.y) * 0xd8163841u));
-  let a = f32(h) * (6.2831853 / 4294967296.0);
-  return vec2f(cos(a), sin(a));
+// A flap's step from 0 to 1, starting when a = 0: a lightly damped spring, so
+// it snaps over and settles with one small bounce.
+fn snap(a: f32) -> f32 {
+  if (a <= 0.0) {
+    return 0.0;
+  }
+  let w = 24.0;
+  let z = 0.55;
+  let wd = w * sqrt(1.0 - z * z);
+  return 1.0 - exp(-z * w * a) * (cos(wd * a) + z * w / wd * sin(wd * a));
 }
 
-// One simplex corner: its value and gradient.
-fn corner(d: vec2f, i: vec2f) -> vec3f {
-  let t = 0.5 - dot(d, d);
-  if (t <= 0.0) {
-    return vec3f(0.0);
+// A tile spinning right round, from 0 to 1 turn: a slower, softer spring.
+fn spin(a: f32) -> f32 {
+  if (a <= 0.0) {
+    return 0.0;
   }
-  let g = lattice(i);
-  let gd = dot(g, d);
-  let t2 = t * t;
-  let t4 = t2 * t2;
-  return vec3f(t4 * gd, t4 * g - 8.0 * t2 * t * gd * d);
+  let w = 13.0;
+  let z = 0.6;
+  let wd = w * sqrt(1.0 - z * z);
+  return 1.0 - exp(-z * w * a) * (cos(wd * a) + z * w / wd * sin(wd * a));
 }
 
-// 2D simplex noise: value in x, gradient in yz.
-fn simplex(p: vec2f) -> vec3f {
-  let F2 = 0.36602540378;
-  let G2 = 0.21132486540;
-  let i = floor(p + (p.x + p.y) * F2);
-  let x0 = p - (i - (i.x + i.y) * G2);
-  let o = select(vec2f(0.0, 1.0), vec2f(1.0, 0.0), x0.x > x0.y);
-  let x1 = x0 - o + G2;
-  let x2 = x0 - 1.0 + 2.0 * G2;
-  return (corner(x0, i) + corner(x1, i + o) + corner(x2, i + 1.0)) * 70.0;
+// A knock: the same spring struck rather than stepped. It swings to 1, back
+// past 0 a little and settles within half a second.
+fn knock(a: f32) -> f32 {
+  if (a <= 0.0) {
+    return 0.0;
+  }
+  return exp(-5.0 * a) * sin(8.66 * a) / 0.473;
 }
 
-// The curl of two octaves of noise: a divergence-free flow, so the field never
-// clumps while it drifts.
-fn flow(p: vec2f, t: f32) -> vec2f {
-  let a = simplex(p * 1.15 + vec2f(t * 0.031, -t * 0.019));
-  let b = simplex(p * 2.9 + vec2f(-t * 0.047, t * 0.041) + vec2f(17.3, -4.1));
-  let g = a.yz * 1.15 + b.yz * (2.9 * 0.32);
-  return vec2f(g.y, -g.x);
-}
-
-@compute @workgroup_size(256)
-fn seed(@builtin(global_invocation_id) gid: vec3u) {
-  let i = gid.x;
-  if (i >= arrayLength(&particles)) {
-    return;
-  }
-  let h = hash(i * 2654435761u + 1u);
-  var p: Particle;
-  p.pos = (vec2f(rand(h), rand(h ^ 0x9e3779b9u)) * 2.0 - 1.0) * vec2f(u.aspect, 1.0);
-  p.vel = vec2f(0.0);
-  p.heat = 0.0;
-  p.rim = 0.0;
-  p.gather = 0.0;
-  p.pad0 = 0.0;
-  particles[i] = p;
-}
-
-@compute @workgroup_size(256)
-fn simulate(@builtin(global_invocation_id) gid: vec3u) {
-  let i = gid.x;
-  if (i >= u.count) {
-    return;
-  }
-  var p = particles[i];
-  let dt = u.dt;
-  let h = hash(i * 747796405u + 2891336453u);
-  let tgt = targets[h % arrayLength(&targets)];
-  let jitter = vec2f(rand(h ^ 0x68e31da4u), rand(h ^ 0xb5297a4du)) - 0.5;
-  let home = u.headCenter + (tgt.xy + jitter * 0.006) * u.headScale;
-
-  let f = flow(p.pos, u.time) * 0.06;
-  // Drifting, velocity relaxes toward the flow. Each particle sets off for
-  // home at its own moment, so the head draws itself in over a second and a
-  // half instead of collapsing as one cloud. A critically damped spring then
-  // holds it exactly at home, with no flow left in and no overshoot, so the
-  // outline stays crisp.
-  let start = rand(h ^ 0x2c1b3c6du) * 0.6;
-  let g = smoothstep(start, start + 0.4, u.gather);
-  let free = (f - p.vel) * 1.4;
-  let k = 64.0 * g;
-  let spring = (home - p.pos) * k - p.vel * 2.0 * sqrt(k);
-  var acc = free * (1.0 - g) + spring;
-
-  if (u.pointerActive > 0.0) {
-    let r = p.pos - u.pointer;
-    let fall = exp(-dot(r, r) / 0.03) * u.pointerActive;
-    acc += (vec2f(-r.y, r.x) * 4.0 + r * 1.2) * fall;
-  }
-
-  if (u.scatter > 0.0) {
-    let away = p.pos - u.headCenter;
-    acc += normalize(away + 1e-5) * u.scatter * (0.6 + rand(h ^ 0x1b873593u)) * 3.0;
-  }
-
-  var heat = p.heat * exp(-dt * 1.8);
-  if (u.strike > 0.0) {
-    var best = 1e9;
-    var push = vec2f(0.0);
-    for (var s = 0u; s < u.segCount; s++) {
-      let seg = u.segs[s];
-      let ab = seg.zw - seg.xy;
-      let k = clamp(dot(p.pos - seg.xy, ab) / max(dot(ab, ab), 1e-8), 0.0, 1.0);
-      let r = p.pos - (seg.xy + ab * k);
-      let d2 = dot(r, r);
-      if (d2 < best) {
-        best = d2;
-        push = r;
-      }
+// The tile's turn about its own horizontal axis (x) and its lean about its
+// vertical one (y) at cycle time c. A positive turn tips its top toward the
+// camera.
+fn turn(t: Tile, i: u32, c: f32) -> vec2f {
+  var a = 0.0;
+  var b = 0.0;
+  // The groove drops out while the strike's wave crosses the wall.
+  let groove = 1.0 - smoothstep(STRIKE_AT - 0.3, STRIKE_AT, c) * (1.0 - smoothstep(STRIKE_AT + 2.0, STRIKE_AT + 3.0, c));
+  // Kicks on beats one and three ring out from the bolt, tipping tiles back
+  // into the panel light; the bar's downbeat hits hardest.
+  let r = length(t.pos - u.boltCenter) / u.unit;
+  let kick = floor(c / (2.0 * BEAT));
+  for (var k = 0.0; k < 2.0; k += 1.0) {
+    let n = kick - k;
+    let age = c - n * 2.0 * BEAT;
+    if (n >= 0.0) {
+      let ring = exp(-pow((r - 0.2 - age * 1.7) / 0.14, 2.0)) * exp(-age * 1.2) * (1.0 - exp(-age * 14.0));
+      a -= ring * select(0.2, 0.32, n % 2.0 == 0.0) * groove;
     }
-    // A bolt at the head pushes and heats by the head's size, so its heat
-    // covers the same share of the head on any screen.
-    let reach = u.boltReach * u.boltReach;
-    acc += normalize(push + 1e-6) * exp(-best / (0.0025 * reach)) * u.strike * 18.0;
-    heat = max(heat, exp(-best / (0.006 * reach)) * u.strike);
   }
-
-  p.vel += acc * dt;
-  p.pos += p.vel * dt;
-  p.heat = heat;
-  p.rim = tgt.z;
-  p.gather = g;
-
-  // Strays respawn anywhere on screen.
-  if (any(abs(p.pos) > vec2f(u.aspect + 0.25, 1.25))) {
-    let r = hash(h ^ bitcast<u32>(u.time));
-    p.pos = (vec2f(rand(r), rand(r ^ 0x85ebca6bu)) * 2.0 - 1.0) * vec2f(u.aspect, 1.0);
-    p.vel = vec2f(0.0);
+  // Hi-hats: on every eighth note a few tiles glint in the panel light.
+  let eighth = floor(c / (0.5 * BEAT));
+  if (rand(hash(i) ^ (u32(eighth) * 0x85ebca6bu)) < 0.002) {
+    a -= 0.45 * max(knock(c - eighth * 0.5 * BEAT), 0.0) * groove;
   }
-  particles[i] = p;
+  let swept = SWEEP_AT + t.sweep * SWEEP_LEN;
+  if (t.bolt > 0.5) {
+    // The bolt's tiles flip to their orange faces as the sweep passes, and
+    // flip on round again in bar six, top to bottom on sixteenth notes.
+    let erase = ERASE_AT + floor(t.along * 8.0) / 8.0 * ERASE_LEN;
+    a += PI * (snap(c - swept) + snap(c - erase));
+  } else {
+    // Every other tile tips back into the overhead panel's light as the sweep
+    // passes, so the sweep is a bar of light.
+    a -= 0.45 * (snap(c - swept) - snap(c - swept - 0.2));
+    // The strike's wave runs out from the bolt, so its front keeps the bolt's
+    // zig-zag: tiles near the bolt spin right round, and farther out they
+    // knock back into the panel light, less the farther they are.
+    let hit = c - STRIKE_AT - t.dist / WAVE_SPEED;
+    if (t.dist < SPIN_BAND) {
+      a += 2.0 * PI * spin(hit);
+    } else {
+      a -= 1.1 * exp(-(t.dist - SPIN_BAND) / 0.7) * knock(hit);
+    }
+  }
+  if (u.pointerAmt > 0.0) {
+    let d = (t.pos - u.pointer) / u.unit;
+    let fall = exp(-dot(d, d) / 0.05) * u.pointerAmt * 0.5;
+    a += clamp(d.y * 4.0, -1.0, 1.0) * fall;
+    b -= clamp(d.x * 4.0, -1.0, 1.0) * fall;
+  }
+  return vec2f(a, b);
 }
-`;
 
-const PARTICLES = /* wgsl */ `${COMMON}
-@group(0) @binding(0) var<uniform> u: U;
-@group(0) @binding(1) var<storage, read> particles: array<Particle>;
+// How brightly the bolt's orange faces glow: barely while written, warming as
+// the strike nears; the lightning lights them white-hot and they cool to
+// embers.
+fn glow(t: Tile, c: f32) -> f32 {
+  let swept = SWEEP_AT + t.sweep * SWEEP_LEN;
+  let charge = smoothstep(swept, STRIKE_AT, c) * step(c, STRIKE_AT);
+  let after = select(0.0, exp(-(c - STRIKE_AT) / 1.2), c >= STRIKE_AT);
+  return 0.06 + 0.3 * charge * charge + 1.6 * after + u.boltLight * 2.5;
+}
 
-struct VOut { @builtin(position) clip: vec4f, @location(0) color: vec3f };
+struct TOut {
+  @builtin(position) clip: vec4f,
+  @location(0) world: vec3f,
+  @location(1) normal: vec3f,
+  @location(2) side: vec3f,
+  @location(3) rise: vec3f,
+  @location(4) uv: vec2f,
+  @location(5) @interpolate(flat) face: u32,
+  @location(6) @interpolate(flat) look: vec4f,
+};
 
+// One box per tile: its front (face 0), its back (1) and four thin edges.
 @vertex
-fn vs(@builtin(vertex_index) i: u32) -> VOut {
-  let p = particles[i];
-  let speed = clamp(length(p.vel) * 2.2, 0.0, 1.0);
-  let metal = mix(vec3f(0.26, 0.27, 0.30), vec3f(0.80, 0.82, 0.88), speed);
-  // A particle dims as it heads home: the rim stays bright metal and the core
-  // goes dark, as in the icon. Its brightness follows the screen's particle
-  // density while it drifts and the head's once gathered, so the formed head
-  // looks the same however large it is laid out.
-  let lit = metal * mix(0.6, p.rim * 0.85, p.gather);
-  let hot = vec3f(1.0, 0.32, 0.14) * p.heat * 4.0 + vec3f(1.0, 0.86, 0.72) * p.heat * p.heat * 3.0;
-  var o: VOut;
-  o.clip = vec4f(p.pos.x / u.aspect, p.pos.y, 0.0, 1.0);
-  o.color = (lit + hot) * mix(u.intensity, u.headIntensity, p.gather);
+fn vs(@builtin(vertex_index) v: u32, @builtin(instance_index) i: u32) -> TOut {
+  let t = tiles[i];
+  var quad = array<vec2f, 6>(
+    vec2f(-1.0, -1.0), vec2f(1.0, -1.0), vec2f(-1.0, 1.0),
+    vec2f(-1.0, 1.0), vec2f(1.0, -1.0), vec2f(1.0, 1.0)
+  );
+  let q = quad[v % 6u];
+  let face = v / 6u;
+  let h = u.half;
+  let d = u.thick;
+  var p = vec3f(q * h, d);
+  var n = vec3f(0.0, 0.0, 1.0);
+  switch face {
+    case 1u: { p = vec3f(q * h, -d); n = vec3f(0.0, 0.0, -1.0); }
+    case 2u: { p = vec3f(h, q.x * h, q.y * d); n = vec3f(1.0, 0.0, 0.0); }
+    case 3u: { p = vec3f(-h, q.x * h, q.y * d); n = vec3f(-1.0, 0.0, 0.0); }
+    case 4u: { p = vec3f(q.x * h, h, q.y * d); n = vec3f(0.0, 1.0, 0.0); }
+    case 5u: { p = vec3f(q.x * h, -h, q.y * d); n = vec3f(0.0, -1.0, 0.0); }
+    default: {}
+  }
+  let ab = turn(t, i, u.cycle);
+  let ca = cos(ab.x);
+  let sa = sin(ab.x);
+  let cb = cos(ab.y);
+  let sb = sin(ab.y);
+  // The tile's own turn (about x, then y), then the wall's.
+  let m = mat3x3f(u.wallX, u.wallY, u.wallN) *
+    mat3x3f(vec3f(cb, 0.0, -sb), vec3f(sb * sa, ca, cb * sa), vec3f(sb * ca, -sa, cb * ca));
+  let world = onWall(t.pos, 0.0) + m * p;
+  var o: TOut;
+  o.clip = project(world);
+  o.world = world;
+  o.normal = m * n;
+  o.side = m[0];
+  o.rise = m[1];
+  o.uv = q;
+  o.face = face;
+  o.look = vec4f(t.bolt, select(0.0, glow(t, u.cycle), t.bolt > 0.5), t.seed, t.dist);
   return o;
 }
 
+fn softbox(r: vec3f, c: vec3f, x: vec3f, y: vec3f, size: vec2f, soft: f32) -> f32 {
+  let k = dot(r, c);
+  if (k <= 0.0) {
+    return 0.0;
+  }
+  let q = abs(vec2f(dot(r, x), dot(r, y)) / k) - size;
+  return (1.0 - smoothstep(-soft, soft, q.x)) * (1.0 - smoothstep(-soft, soft, q.y));
+}
+
+// The studio seen along r; a rougher surface sees it softer and dimmer.
+fn env(r: vec3f, rough: f32) -> vec3f {
+  let soft = 0.02 + rough * 0.6;
+  let dim = 1.0 / (1.0 + rough * 4.0);
+  var e = mix(vec3f(0.0012, 0.0013, 0.0016), vec3f(0.008, 0.0085, 0.01), smoothstep(-0.6, 0.9, r.y));
+  e += KEY_COLOR * softbox(r, KEY, KEY_X, KEY_Y, vec2f(0.12, 0.07), soft) * dim;
+  e += PANEL_COLOR * softbox(r, PANEL, PANEL_X, PANEL_Y, vec2f(1.6, 0.3), soft) * dim;
+  e += WARM_COLOR * softbox(r, WARM, WARM_X, WARM_Y, vec2f(0.5, 0.22), soft + 0.2);
+  return e;
+}
+
+fn irradiance(n: vec3f) -> vec3f {
+  return KEY_COLOR * max(dot(n, KEY), 0.0) * 0.08 + WARM_COLOR * max(dot(n, WARM), 0.0) * 0.2 + vec3f(0.004);
+}
+
 @fragment
-fn fs(@location(0) color: vec3f) -> @location(0) vec4f {
-  return vec4f(color, 1.0);
+fn fs(in: TOut) -> @location(0) vec4f {
+  var n = normalize(in.normal);
+  let seed = in.look.z;
+  if (in.face < 2u) {
+    // A chamfer round each face: the normal leans out toward the nearest
+    // edge, so each tile's top edge catches the panel light overhead.
+    let e = abs(in.uv);
+    let edge = smoothstep(0.8, 1.0, max(e.x, e.y));
+    let out = select(vec2f(0.0, sign(in.uv.y)), vec2f(sign(in.uv.x), 0.0), e.x > e.y);
+    n = normalize(n + (normalize(in.side) * out.x + normalize(in.rise) * out.y) * edge * 0.5);
+  }
+  var f0 = vec3f(0.62, 0.6, 0.57); // the edges: brushed steel
+  var rough = 0.3;
+  var albedo = vec3f(0.0);
+  var emit = vec3f(0.0);
+  if (in.face == 0u) {
+    // The front: glossy black glass, each tile a little different, so the
+    // studio's reflection breaks up across them.
+    f0 = vec3f(0.04) * (0.8 + 0.4 * seed);
+    rough = 0.08 + 0.08 * seed;
+  } else if (in.face == 1u && in.look.x > 0.5) {
+    // The bolt's back: satin orange enamel, glowing.
+    f0 = vec3f(0.02);
+    rough = 0.22;
+    albedo = vec3f(1.0, 0.09, 0.033) * 0.5;
+    let g = in.look.y;
+    emit = vec3f(1.0, 0.16, 0.05) * g + vec3f(1.0, 0.75, 0.55) * max(g - 1.6, 0.0) * 0.8;
+  } else if (in.face == 1u) {
+    // Every other back: polished champagne metal.
+    f0 = vec3f(0.8, 0.74, 0.66);
+    rough = 0.2 + 0.1 * seed;
+  }
+  let v = normalize(u.eye - in.world);
+  let nv = max(dot(n, v), 1e-3);
+  let fr = f0 + (1.0 - f0) * pow(1.0 - nv, 5.0);
+  var c = env(reflect(-v, n), rough) * fr + albedo * irradiance(n) * (1.0 - fr) + emit;
+  // The lightning lights the tiles around it.
+  c += vec3f(1.0, 0.62, 0.42) * u.boltLight * exp(-in.look.w / 0.15) * (0.08 + fr.x);
+  return vec4f(c, 1.0);
 }
 `;
 
@@ -244,7 +369,8 @@ struct BOut {
   @location(1) @interpolate(flat) seg: u32,
 };
 
-// One quad per segment, wide enough for its glow.
+// One quad per segment on the wall, just in front of the tiles, wide enough
+// for its glow.
 @vertex
 fn vs(@builtin(vertex_index) v: u32, @builtin(instance_index) s: u32) -> BOut {
   let seg = segs[s];
@@ -258,7 +384,7 @@ fn vs(@builtin(vertex_index) v: u32, @builtin(instance_index) s: u32) -> BOut {
   let r = seg.width * seg.glow;
   let world = seg.a + dir * mix(-r, len + r, c.x) + vec2f(-dir.y, dir.x) * mix(-r, r, c.y);
   var o: BOut;
-  o.clip = vec4f(world.x / u.aspect, world.y, 0.0, 1.0);
+  o.clip = project(onWall(world, u.thick * 4.0));
   o.world = world;
   o.seg = s;
   return o;
@@ -273,7 +399,7 @@ fn fs(in: BOut) -> @location(0) vec4f {
   let core = exp(-pow(d / seg.width, 2.0));
   let glow = exp(-d / (seg.width * seg.glow * 0.25));
   let c = vec3f(1.0, 0.96, 0.92) * core * 6.0 + vec3f(1.0, 0.38, 0.16) * glow * 1.2;
-  return vec4f(c * u.boltIntensity, 1.0);
+  return vec4f(c * u.boltLight, 1.0);
 }
 `;
 
@@ -332,9 +458,7 @@ fn aces(x: vec3f) -> vec3f {
 
 @fragment
 fn fs(in: FOut) -> @location(0) vec4f {
-  var c = textureSample(scene, samp, in.uv).rgb + textureSample(bloom, samp, in.uv).rgb * 0.9;
-  // The strike lights the whole room for a moment.
-  c += vec3f(1.0, 0.42, 0.22) * u.flash * 0.06;
+  var c = textureSample(scene, samp, in.uv).rgb + textureSample(bloom, samp, in.uv).rgb * 0.7;
   let q = in.uv - 0.5;
   c *= 1.0 - dot(q, q) * 0.9;
   c = pow(aces(c), vec3f(1.0 / 2.2));
@@ -362,48 +486,24 @@ async function compile(device, code, label) {
   return module;
 }
 
-// Samples the head's outlines into target points (x, y in [-1, 1], glow).
-// The metal rim and the outline glow; the dark core inside stays dim.
-function sampleTargets(headPath, rimPath) {
-  const size = 512;
-  const surface =
-    typeof OffscreenCanvas === 'function'
-      ? new OffscreenCanvas(size, size)
-      : Object.assign(document.createElement('canvas'), { height: size, width: size });
-  const g = surface.getContext('2d', { willReadFrequently: true });
-  const alpha = (d, rule) => {
-    g.setTransform(1, 0, 0, 1, 0, 0);
-    g.clearRect(0, 0, size, size);
-    g.setTransform(size / 1024, 0, 0, size / 1024, 0, 0);
-    g.fill(new Path2D(d), rule);
-    return g.getImageData(0, 0, size, size).data;
-  };
-  const head = alpha(headPath, 'nonzero');
-  const rim = alpha(rimPath, 'evenodd');
-  const inHead = (x, y) => x >= 0 && y >= 0 && x < size && y < size && head[(y * size + x) * 4 + 3] > 127;
-  const pools = { body: [], edge: [], rim: [] };
-  for (let y = 0; y < size; y += 1) {
-    for (let x = 0; x < size; x += 1) {
-      const a = (y * size + x) * 4 + 3;
-      if (rim[a] > 127) {
-        pools.rim.push(x, y);
-      }
-      if (head[a] > 127) {
-        const edge = !(inHead(x + 1, y) && inHead(x - 1, y) && inHead(x, y + 1) && inHead(x, y - 1));
-        (edge ? pools.edge : pools.body).push(x, y);
-      }
+// The point of a polyline nearest p: its distance, and how far along the line
+// it lies.
+function nearest(line, p) {
+  let best = { d: Number.POSITIVE_INFINITY, s: 0 };
+  let run = 0;
+  for (let i = 1; i < line.length; i += 1) {
+    const [ax, ay] = line[i - 1];
+    const dx = line[i][0] - ax;
+    const dy = line[i][1] - ay;
+    const length = Math.hypot(dx, dy);
+    const k = Math.min(Math.max(((p[0] - ax) * dx + (p[1] - ay) * dy) / (length * length), 0), 1);
+    const d = Math.hypot(p[0] - ax - dx * k, p[1] - ay - dy * k);
+    if (d < best.d) {
+      best = { d, s: run + k * length };
     }
+    run += length;
   }
-  const out = new Float32Array(TARGETS * 4);
-  for (let t = 0; t < TARGETS; t += 1) {
-    const r = Math.random();
-    const [pool, glow] = r < 0.42 ? [pools.rim, 1] : r < 0.6 ? [pools.edge, 0.9] : [pools.body, 0.25];
-    const k = Math.floor(Math.random() * (pool.length / 2)) * 2;
-    out[t * 4] = ((pool[k] + Math.random()) / size) * 2 - 1;
-    out[t * 4 + 1] = 1 - ((pool[k + 1] + Math.random()) / size) * 2;
-    out[t * 4 + 2] = glow;
-  }
-  return out;
+  return { ...best, length: run };
 }
 
 // Midpoint displacement: each pass splits every segment and pushes the new
@@ -440,6 +540,33 @@ function branchFrom(line, count, width) {
   return branches;
 }
 
+// A camera looking at the wall from DISTANCE, moved by (dx, dy).
+function camera(dx, dy) {
+  const eye = [dx, dy, DISTANCE];
+  const forward = norm([-0.6 * dx, -0.6 * dy, -DISTANCE]);
+  const right = norm(cross(forward, [0, 1, 0]));
+  return { eye, forward, right, up: cross(right, forward) };
+}
+
+const REST = camera(0, 0);
+
+// The camera drifts slowly, for a little parallax.
+const cameraAt = (t) => camera(Math.sin(t * 0.23) * 0.09, Math.sin(t * 0.17 + 1) * 0.05);
+
+// Lightning flickers: three quick flashes over a fading afterglow.
+const boltLight = (age) => {
+  if (age < 0 || age > 1.6) {
+    return 0;
+  }
+  let v = 0.35 * Math.exp(-age / 0.4);
+  for (const flash of [0, 0.075, 0.2]) {
+    if (age >= flash) {
+      v += Math.exp(-(age - flash) / 0.045);
+    }
+  }
+  return v;
+};
+
 async function start() {
   if (!(canvas && still)) {
     return;
@@ -470,54 +597,30 @@ async function start() {
   const format = navigator.gpu.getPreferredCanvasFormat();
   context.configure({ alphaMode: 'opaque', device, format });
 
-  const small = matchMedia('(pointer: coarse)').matches || Math.min(innerWidth, innerHeight) < 700;
-  const capacity = small ? 1 << 18 : 1 << 20;
-  let count = capacity;
-
   const BUFFER = GPUBufferUsage;
-  const { COMPUTE, FRAGMENT, VERTEX } = GPUShaderStage;
-  const uniformData = new ArrayBuffer(UNIFORM_FLOATS * 4);
-  const f32 = new Float32Array(uniformData);
-  const u32 = new Uint32Array(uniformData);
-  const uniforms = device.createBuffer({ size: uniformData.byteLength, usage: BUFFER.UNIFORM | BUFFER.COPY_DST });
-  const particles = device.createBuffer({ size: capacity * 32, usage: BUFFER.STORAGE });
-  const targets = device.createBuffer({ size: TARGETS * 16, usage: BUFFER.STORAGE | BUFFER.COPY_DST });
+  const { FRAGMENT, VERTEX } = GPUShaderStage;
+  const f32 = new Float32Array(UNIFORM_FLOATS);
+  const uniforms = device.createBuffer({ size: f32.byteLength, usage: BUFFER.UNIFORM | BUFFER.COPY_DST });
   const segments = device.createBuffer({ size: MAX_SEGMENTS * 32, usage: BUFFER.STORAGE | BUFFER.COPY_DST });
-  device.queue.writeBuffer(
-    targets,
-    0,
-    sampleTargets(
-      still.querySelector('[data-shape="head"]').getAttribute('d'),
-      still.querySelector('[data-shape="rim"]').getAttribute('d')
-    )
-  );
 
-  const simLayout = device.createBindGroupLayout({
-    entries: [
-      { binding: 0, buffer: { type: 'uniform' }, visibility: COMPUTE },
-      { binding: 1, buffer: { type: 'storage' }, visibility: COMPUTE },
-      { binding: 2, buffer: { type: 'read-only-storage' }, visibility: COMPUTE },
-    ],
-  });
   const drawLayout = device.createBindGroupLayout({
     entries: [
       { binding: 0, buffer: { type: 'uniform' }, visibility: VERTEX | FRAGMENT },
       { binding: 1, buffer: { type: 'read-only-storage' }, visibility: VERTEX | FRAGMENT },
     ],
   });
-  const [simModule, particleModule, boltModule, blurModule, compositeModule] = await Promise.all([
-    compile(device, SIMULATE, 'simulate'),
-    compile(device, PARTICLES, 'particles'),
+  const [tileModule, boltModule, blurModule, compositeModule] = await Promise.all([
+    compile(device, TILES, 'tiles'),
     compile(device, BOLTS, 'bolts'),
     compile(device, BLUR, 'bloom'),
     compile(device, COMPOSITE, 'composite'),
   ]);
   const HDR = 'rgba16float';
+  const DEPTH = 'depth24plus';
   const additive = {
     alpha: { dstFactor: 'one', operation: 'add', srcFactor: 'one' },
     color: { dstFactor: 'one', operation: 'add', srcFactor: 'one' },
   };
-  const simPipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [simLayout] });
   const drawPipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [drawLayout] });
   const fullscreen = (module, entryPoint, targetFormat) =>
     device.createRenderPipelineAsync({
@@ -525,76 +628,147 @@ async function start() {
       layout: 'auto',
       vertex: { entryPoint: 'vs', module },
     });
-  const [seedPipeline, simPipeline, particlePipeline, boltPipeline, downPipeline, blurPipeline, compositePipeline] =
-    await Promise.all([
-      device.createComputePipelineAsync({ compute: { entryPoint: 'seed', module: simModule }, layout: simPipelineLayout }),
-      device.createComputePipelineAsync({
-        compute: { entryPoint: 'simulate', module: simModule },
-        layout: simPipelineLayout,
-      }),
-      device.createRenderPipelineAsync({
-        fragment: { entryPoint: 'fs', module: particleModule, targets: [{ blend: additive, format: HDR }] },
-        layout: drawPipelineLayout,
-        primitive: { topology: 'point-list' },
-        vertex: { entryPoint: 'vs', module: particleModule },
-      }),
-      device.createRenderPipelineAsync({
-        fragment: { entryPoint: 'fs', module: boltModule, targets: [{ blend: additive, format: HDR }] },
-        layout: drawPipelineLayout,
-        vertex: { entryPoint: 'vs', module: boltModule },
-      }),
-      fullscreen(blurModule, 'down', HDR),
-      fullscreen(blurModule, 'blur', HDR),
-      fullscreen(compositeModule, 'fs', format),
-    ]);
+  const [tilePipeline, boltPipeline, downPipeline, blurPipeline, compositePipeline] = await Promise.all([
+    device.createRenderPipelineAsync({
+      depthStencil: { depthCompare: 'less', depthWriteEnabled: true, format: DEPTH },
+      fragment: { entryPoint: 'fs', module: tileModule, targets: [{ format: HDR }] },
+      layout: drawPipelineLayout,
+      multisample: { count: SAMPLES },
+      vertex: { entryPoint: 'vs', module: tileModule },
+    }),
+    device.createRenderPipelineAsync({
+      depthStencil: { depthCompare: 'always', depthWriteEnabled: false, format: DEPTH },
+      fragment: { entryPoint: 'fs', module: boltModule, targets: [{ blend: additive, format: HDR }] },
+      layout: drawPipelineLayout,
+      multisample: { count: SAMPLES },
+      vertex: { entryPoint: 'vs', module: boltModule },
+    }),
+    fullscreen(blurModule, 'down', HDR),
+    fullscreen(blurModule, 'blur', HDR),
+    fullscreen(compositeModule, 'fs', format),
+  ]);
 
   const bind = (layout, buffers) =>
     device.createBindGroup({ entries: buffers.map((buffer, binding) => ({ binding, resource: { buffer } })), layout });
-  const simGroup = bind(simLayout, [uniforms, particles, targets]);
-  const particleGroup = bind(drawLayout, [uniforms, particles]);
   const boltGroup = bind(drawLayout, [uniforms, segments]);
   const sampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
   const passUniforms = [0, 1, 2].map(() =>
     device.createBuffer({ size: 16, usage: BUFFER.UNIFORM | BUFFER.COPY_DST })
   );
 
-  // Screen state: render size, head placement and the post-process targets.
+  // Screen state: render size, the wall's tiles and bolt, and the render
+  // targets.
   let width = 0;
   let height = 0;
   let aspect = 1;
-  let head = { cx: 0, cy: 0, scale: 0.8 };
+  let wall = null;
+  let tiles = null;
+  let textures = [];
   let views = null;
 
+  // Where the ray through a point on screen (in NDC) meets the wall, in the
+  // wall's own coordinates.
+  function toWall(cam, x, y) {
+    const dir = add(add(cam.forward, cam.right, (x * aspect) / FOCAL), cam.up, y / FOCAL);
+    const p = add(cam.eye, dir, -dot(cam.eye, WALL_N) / dot(dir, WALL_N));
+    return [dot(p, WALL_X), dot(p, WALL_Y)];
+  }
+
+  // Where a point on the wall is on screen, in NDC.
+  function toScreen(cam, [x, y]) {
+    const r = add(add(WALL_X.map((v) => v * x), WALL_Y, y), cam.eye, -1);
+    const z = dot(r, cam.forward);
+    return [(dot(r, cam.right) * FOCAL) / aspect / z, (dot(r, cam.up) * FOCAL) / z];
+  }
+
   function layout() {
-    const dpr = Math.min(devicePixelRatio || 1, DPR_CAP);
     const cssWidth = canvas.clientWidth;
     const cssHeight = canvas.clientHeight;
+    const dpr = Math.min(devicePixelRatio || 1, DPR_CAP, Math.sqrt(MAX_PIXELS / (cssWidth * cssHeight)));
     width = Math.max(1, Math.round(cssWidth * dpr));
     height = Math.max(1, Math.round(cssHeight * dpr));
     aspect = cssWidth / cssHeight;
     canvas.width = width;
     canvas.height = height;
+
+    // The bolt goes where CSS lays out the still mark.
     const box = still.getBoundingClientRect();
-    head = {
-      cx: (((box.left + box.width / 2) / cssWidth) * 2 - 1) * aspect,
-      cy: 1 - ((box.top + box.height / 2) / cssHeight) * 2,
-      scale: box.height / cssHeight,
-    };
-    const texture = (w, h) =>
-      device.createTexture({
-        format: HDR,
+    const fromIcon = ([x, y]) =>
+      toWall(
+        REST,
+        ((box.left + (x / 1024) * box.width) / cssWidth) * 2 - 1,
+        1 - ((box.top + (y / 1024) * box.height) / cssHeight) * 2
+      );
+    const path = SPLIT.map(fromIcon);
+    const crown = fromIcon([512, 0]);
+    const chin = fromIcon([512, 1024]);
+    const unit = Math.hypot(crown[0] - chin[0], crown[1] - chin[1]);
+    const center = fromIcon([512, 470]);
+    const corners = [
+      [-1.15, -1.15],
+      [1.15, -1.15],
+      [-1.15, 1.15],
+      [1.15, 1.15],
+    ].map(([x, y]) => toWall(REST, x, y));
+    const [minX, maxX] = [Math.min(...corners.map((c) => c[0])), Math.max(...corners.map((c) => c[0]))];
+    const [minY, maxY] = [Math.min(...corners.map((c) => c[1])), Math.max(...corners.map((c) => c[1]))];
+
+    // Tiles are a fiftieth of the head's height, from 9 to 18 CSS pixels.
+    const pxPerUnit = ((cssHeight / 2) * FOCAL) / DISTANCE;
+    const pitch = Math.max(
+      Math.min(Math.max(box.height / 50, 9), 18) / pxPerUnit,
+      Math.sqrt(((maxX - minX) * (maxY - minY)) / MAX_TILES)
+    );
+    // The bolt is three or so tiles wide, and tapers at its ends.
+    const boltHalf = Math.max(unit * 0.03, pitch * 1.2);
+    const [x0, y0] = [
+      center[0] + Math.floor((minX - center[0]) / pitch) * pitch,
+      center[1] + Math.floor((minY - center[1]) / pitch) * pitch,
+    ];
+    const cols = Math.ceil((maxX - x0) / pitch) + 1;
+    const rows = Math.ceil((maxY - y0) / pitch) + 1;
+    const data = new Float32Array(cols * rows * 8);
+    for (let row = 0; row < rows; row += 1) {
+      for (let col = 0; col < cols; col += 1) {
+        const p = [x0 + col * pitch, y0 + row * pitch];
+        const bolt = nearest(path, p);
+        const taper = 0.4 + 0.6 * smoothstep(0, bolt.length * 0.15, Math.min(bolt.s, bolt.length - bolt.s));
+        const [nx] = toScreen(REST, p);
+        data.set(
+          [...p, (nx + 1) / 2, bolt.d < boltHalf * taper ? 1 : 0, bolt.d / unit, bolt.s / bolt.length, Math.random(), 0],
+          (row * cols + col) * 8
+        );
+      }
+    }
+    tiles?.buffer.destroy();
+    const buffer = device.createBuffer({ size: data.byteLength, usage: BUFFER.STORAGE | BUFFER.COPY_DST });
+    device.queue.writeBuffer(buffer, 0, data);
+    tiles = { buffer, count: cols * rows, group: bind(drawLayout, [uniforms, buffer]) };
+    wall = { bottom: minY, center, half: pitch * 0.46, path, thick: pitch * 0.06, top: maxY, unit };
+
+    for (const texture of textures) {
+      texture.destroy();
+    }
+    textures = [];
+    const target = (w, h, targetFormat, sampleCount) => {
+      const texture = device.createTexture({
+        format: targetFormat,
+        sampleCount,
         size: [w, h],
-        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | (sampleCount === 1 ? GPUTextureUsage.TEXTURE_BINDING : 0),
       });
+      textures.push(texture);
+      return texture.createView();
+    };
     const bw = Math.max(1, Math.floor(width / 4));
     const bh = Math.max(1, Math.floor(height / 4));
-    const scene = texture(width, height).createView();
-    const bloomA = texture(bw, bh).createView();
-    const bloomB = texture(bw, bh).createView();
-    // The bloom's tap step is a share of the head's size, so a small head (a
-    // phone's) glows as tightly as a large one; it never widens past 1.6
-    // texels, where the 9-tap blur would start to leave gaps.
-    const spread = Math.min((head.scale * height) / 700, 1.6);
+    const scene = target(width, height, HDR, 1);
+    const bloomA = target(bw, bh, HDR, 1);
+    const bloomB = target(bw, bh, HDR, 1);
+    // The bloom's tap step is a share of the head's size, so a phone's small
+    // head glows as tightly as a large one; it never widens past 1.6 texels,
+    // where the 9-tap blur would start to leave gaps.
+    const spread = Math.min(((box.height / cssHeight) * height) / 700, 1.6);
     device.queue.writeBuffer(passUniforms[0], 0, new Float32Array([1 / width, 1 / height, 0, 0]));
     device.queue.writeBuffer(passUniforms[1], 0, new Float32Array([0, 0, spread / bw, 0]));
     device.queue.writeBuffer(passUniforms[2], 0, new Float32Array([0, 0, 0, spread / bh]));
@@ -621,56 +795,36 @@ async function start() {
         ],
         layout: compositePipeline.getBindGroupLayout(0),
       }),
+      depth: target(width, height, DEPTH, SAMPLES),
       down: pass(downPipeline, scene, passUniforms[0]),
+      msaa: target(width, height, HDR, SAMPLES),
       scene,
     };
   }
 
-  const fromIcon = ([x, y]) => [head.cx + (x / 512 - 1) * head.scale, head.cy + (1 - y / 512) * head.scale];
+  // The strike's lightning: from the sky, down the bolt, out under it.
+  let drawn = 0;
 
-  // The current bolt: its drawn segments are in `segments`, and its impulse
-  // path (a coarser copy) goes in the uniforms while it strikes.
-  let bolt = null;
-
-  function strike(kind, at) {
-    let main;
-    let branches;
-    let light = 1;
-    let impulse = 1;
-    if (kind === 'signature') {
-      // From the sky, down the split in the head, out under the chin.
-      const inside = SPLIT.map(fromIcon);
-      const [tx, ty] = inside[0];
-      const up = [tx - inside[1][0], ty - inside[1][1]];
-      const sky = [tx + (up[0] / up[1]) * (1.15 - ty), 1.15];
-      const last = inside.at(-1);
-      const down = [last[0] - inside.at(-2)[0], last[1] - inside.at(-2)[1]];
-      const ground = [last[0] + (down[0] / -down[1]) * (last[1] + 1.15), -1.15];
-      main = [
-        ...jagged([sky, inside[0]], 0.32, 5),
-        ...jagged(inside, 0.06, 3).slice(1),
-        ...jagged([last, ground], 0.3, 5).slice(1),
-      ];
-      branches = branchFrom(main.slice(0, 33), 2, 0.0018).concat(branchFrom(main.slice(-33), 2, 0.0018));
-    } else if (kind === 'aftershock') {
-      const [ox, oy] = fromIcon([700 + Math.random() * 80, 260 + Math.random() * 260]);
-      const heading = Math.random() * Math.PI * 2;
-      main = jagged([[ox, oy], [ox + Math.cos(heading) * 0.35, oy + Math.sin(heading) * 0.35]], 0.45, 4);
-      branches = branchFrom(main, 1, 0.0014);
-      light = 0.55;
-      impulse = 0.5;
-    } else {
-      const x = (Math.random() * 1.8 - 0.9) * aspect;
-      const end = [x + (Math.random() - 0.5) * 0.9, -0.3 + Math.random() * 0.8];
-      const mid = (t, wobble) => [x + (end[0] - x) * t + (Math.random() - 0.5) * wobble, 1.15 + (end[1] - 1.15) * t];
-      main = jagged([[x, 1.15], mid(0.35, 0.25), mid(0.7, 0.2), end], 0.35, 4);
-      branches = branchFrom(main, 2, 0.0016);
-      light = 0.7;
-      impulse = 0.7;
-    }
-    const lines = [{ points: main, width: 0.0032 }, ...branches];
+  function strike() {
+    const inside = wall.path;
+    const [tx, ty] = inside[0];
+    const up = [tx - inside[1][0], ty - inside[1][1]];
+    const sky = [tx + (up[0] / up[1]) * (wall.top - ty), wall.top];
+    const last = inside.at(-1);
+    const down = [last[0] - inside.at(-2)[0], last[1] - inside.at(-2)[1]];
+    const ground = [last[0] + (down[0] / -down[1]) * (last[1] - wall.bottom), wall.bottom];
+    const main = [
+      ...jagged([sky, inside[0]], 0.3, 5),
+      ...jagged(inside, 0.05, 3).slice(1),
+      ...jagged([last, ground], 0.3, 5).slice(1),
+    ];
+    const lines = [
+      { points: main, width: 0.0032 },
+      ...branchFrom(main.slice(0, 33), 2, 0.0018),
+      ...branchFrom(main.slice(-33), 2, 0.0018),
+    ];
     const data = new Float32Array(MAX_SEGMENTS * 8);
-    let drawn = 0;
+    drawn = 0;
     for (const { points, width: w } of lines) {
       for (let i = 1; i < points.length && drawn < MAX_SEGMENTS; i += 1) {
         data.set([...points[i - 1], ...points[i], w, 14], drawn * 8);
@@ -678,110 +832,47 @@ async function start() {
       }
     }
     device.queue.writeBuffer(segments, 0, data, 0, drawn * 8);
-    const step = Math.ceil((main.length - 1) / IMPULSE_SEGMENTS);
-    const coarse = main.filter((_, i) => i % step === 0 || i === main.length - 1);
-    for (let i = 1; i < coarse.length; i += 1) {
-      f32.set([...coarse[i - 1], ...coarse[i]], 20 + (i - 1) * 4);
-    }
-    const reach = kind === 'ambient' ? 1 : head.scale / HEAD_SCALE;
-    bolt = { at, drawn, impulse, impulseSegments: coarse.length - 1, kind, light, reach };
   }
 
-  // Lightning flickers: three quick flashes over a fading afterglow.
-  const boltLight = (age) => {
-    if (age < 0 || age > 1.6) {
-      return 0;
-    }
-    let v = 0.35 * Math.exp(-age / 0.4);
-    for (const flash of [0, 0.075, 0.2]) {
-      if (age >= flash) {
-        v += Math.exp(-(age - flash) / 0.045);
-      }
-    }
-    return v;
-  };
+  const pointer = { amount: 0, at: -10, inside: false, wall: null, x: 0, y: 0 };
 
-  const EVENTS = [
-    { at: 1.6, kind: 'ambient' },
-    { at: 8.0, kind: 'signature' },
-    { at: 9.3, kind: 'aftershock' },
-    { at: 13.4, kind: 'ambient' },
-  ];
-
-  let elapsed = 0;
-  // The page opens mid-cycle; events before that point wait for the next one.
-  let cycle = Math.floor(START / CYCLE);
-  let fired = new Set(EVENTS.filter((event) => event.at < START % CYCLE));
-  const pointer = { at: -10, inside: false, x: 0, y: 0 };
-
-  function writeUniforms(t, dt, phase) {
-    f32[0] = t;
-    f32[1] = dt;
-    f32[2] = aspect;
-    f32[3] = phase.gather;
-    f32[4] = pointer.x;
-    f32[5] = pointer.y;
-    f32[6] = phase.pointer;
-    f32[7] = phase.scatter;
-    f32[8] = phase.strike;
-    u32[9] = phase.strike > 0 ? bolt.impulseSegments : 0;
-    f32[10] = head.scale;
-    u32[11] = count;
-    f32[12] = head.cx;
-    f32[13] = head.cy;
-    f32[14] = 1.25 * Math.min(Math.max((width * height) / count / 4.5, 0.55), 1.8);
-    f32[15] = phase.light;
-    f32[16] = phase.flash;
-    f32[17] = (1.25 * (head.scale * height) ** 2) / count / 2;
-    f32[18] = bolt ? bolt.reach : 1;
-    device.queue.writeBuffer(uniforms, 0, uniformData);
+  function writeUniforms(t, c, light, cam) {
+    f32.set(cam.eye, 0);
+    f32[3] = aspect;
+    f32.set(cam.right, 4);
+    f32[7] = FOCAL;
+    f32.set(cam.up, 8);
+    f32[11] = c;
+    f32.set(cam.forward, 12);
+    f32[15] = t;
+    f32.set(WALL_X, 16);
+    f32[19] = wall.unit;
+    f32.set(WALL_Y, 20);
+    f32[23] = wall.half;
+    f32.set(WALL_N, 24);
+    f32[27] = wall.thick;
+    f32.set(pointer.wall ?? [0, 0], 28);
+    f32[30] = pointer.amount;
+    f32[31] = light;
+    f32.set(wall.center, 32);
+    device.queue.writeBuffer(uniforms, 0, f32);
   }
 
-  function phaseAt(t) {
-    const c = t % CYCLE;
-    const index = Math.floor(t / CYCLE);
-    if (index !== cycle) {
-      cycle = index;
-      fired = new Set();
-    }
-    for (const event of EVENTS) {
-      if (c >= event.at && !fired.has(event)) {
-        fired.add(event);
-        strike(event.kind, t);
-      }
-    }
-    const age = bolt ? t - bolt.at : 10;
-    const light = bolt ? boltLight(age) * bolt.light : 0;
-    const idle = (performance.now() - pointer.at) / 1000;
-    return {
-      flash: bolt?.kind === 'signature' ? light : light * 0.4,
-      gather: smoothstep(4.4, 7.0, c) * (1 - smoothstep(11.35, 11.9, c)),
-      light,
-      pointer: pointer.inside ? 1 - smoothstep(1.2, 2, idle) : 0,
-      scatter: c >= 11.5 && c < 11.9 ? (1 - (c - 11.5) / 0.4) * 1.4 : 0,
-      strike: bolt && age < 0.22 ? Math.exp(-age / 0.06) * bolt.impulse : 0,
-    };
-  }
-
-  function encode(simSteps) {
+  function encode(lightning) {
     const encoder = device.createCommandEncoder();
-    const compute = encoder.beginComputePass();
-    compute.setBindGroup(0, simGroup);
-    compute.setPipeline(simPipeline);
-    for (let step = 0; step < simSteps; step += 1) {
-      compute.dispatchWorkgroups(Math.ceil(count / 256));
-    }
-    compute.end();
     const scenePass = encoder.beginRenderPass({
-      colorAttachments: [{ clearValue: [0, 0, 0, 1], loadOp: 'clear', storeOp: 'store', view: views.scene }],
+      colorAttachments: [
+        { clearValue: [0, 0, 0, 1], loadOp: 'clear', resolveTarget: views.scene, storeOp: 'discard', view: views.msaa },
+      ],
+      depthStencilAttachment: { depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'discard', view: views.depth },
     });
-    scenePass.setPipeline(particlePipeline);
-    scenePass.setBindGroup(0, particleGroup);
-    scenePass.draw(count);
-    if (bolt && f32[15] > 0.002) {
+    scenePass.setPipeline(tilePipeline);
+    scenePass.setBindGroup(0, tiles.group);
+    scenePass.draw(36, tiles.count);
+    if (lightning) {
       scenePass.setPipeline(boltPipeline);
       scenePass.setBindGroup(0, boltGroup);
-      scenePass.draw(6, bolt.drawn);
+      scenePass.draw(6, drawn);
     }
     scenePass.end();
     const post = (pipeline, group, view) => {
@@ -800,34 +891,37 @@ async function start() {
     device.queue.submit([encoder.finish()]);
   }
 
-  // One formed frame, for reduced motion: the head, held, with its bolt.
+  // One frame for reduced motion: the bolt written on the wall after its
+  // strike, still glowing.
   function drawStill() {
-    strike('signature', 0);
-    writeUniforms(START + 9, 1 / 60, { flash: 0, gather: 1, light: 0.6, pointer: 0, scatter: 0, strike: 0 });
-    encode(360);
+    writeUniforms(START, STRIKE_AT + 2, 0, REST);
+    encode(false);
   }
 
+  let elapsed = 0;
   let last = 0;
-  const slowFrames = [];
-  let downgrades = 0;
+  let struck = -1;
 
   function frame(now) {
     const dt = Math.min((now - last) / 1000, 1 / 30);
     last = now;
     elapsed += dt;
     const t = START + elapsed;
-    writeUniforms(t, dt, phaseAt(t));
-    encode(1);
-    // Quality steps down at most twice if the GPU cannot keep up.
-    slowFrames.push(dt);
-    if (slowFrames.length === 120) {
-      slowFrames.sort((a, b) => a - b);
-      if (slowFrames[60] > 1 / 42 && downgrades < 2) {
-        count >>= 1;
-        downgrades += 1;
-      }
-      slowFrames.length = 0;
+    const c = t % CYCLE;
+    if (c >= STRIKE_AT && struck !== Math.floor(t / CYCLE)) {
+      struck = Math.floor(t / CYCLE);
+      strike();
     }
+    const light = c >= STRIKE_AT ? boltLight(c - STRIKE_AT) : 0;
+    const cam = cameraAt(t);
+    // The pointer's pull eases in as it moves and out a second after it stops.
+    const idle = (performance.now() - pointer.at) / 1000;
+    const pull = pointer.inside ? 1 - smoothstep(1.2, 2, idle) : 0;
+    pointer.amount += (pull - pointer.amount) * (1 - Math.exp(-dt * 6));
+    const aim = toWall(cam, (pointer.x / innerWidth) * 2 - 1, 1 - (pointer.y / innerHeight) * 2);
+    pointer.wall = pointer.wall ? pointer.wall.map((v, k) => v + (aim[k] - v) * (1 - Math.exp(-dt * 10))) : aim;
+    writeUniforms(t, c, light, cam);
+    encode(light > 0.002);
     raf = requestAnimationFrame(frame);
   }
 
@@ -843,17 +937,6 @@ async function start() {
   }
 
   layout();
-  f32[2] = aspect;
-  device.queue.writeBuffer(uniforms, 0, uniformData);
-  {
-    const encoder = device.createCommandEncoder();
-    const pass = encoder.beginComputePass();
-    pass.setPipeline(seedPipeline);
-    pass.setBindGroup(0, simGroup);
-    pass.dispatchWorkgroups(Math.ceil(capacity / 256));
-    pass.end();
-    device.queue.submit([encoder.finish()]);
-  }
   run();
   device.queue.onSubmittedWorkDone().then(() => {
     if (root.dataset.backdrop !== 'still') {
@@ -870,8 +953,8 @@ async function start() {
   document.addEventListener('visibilitychange', run);
   reducedMotion.addEventListener('change', run);
   addEventListener('pointermove', (event) => {
-    pointer.x = ((event.clientX / innerWidth) * 2 - 1) * aspect;
-    pointer.y = 1 - (event.clientY / innerHeight) * 2;
+    pointer.x = event.clientX;
+    pointer.y = event.clientY;
     pointer.at = performance.now();
     pointer.inside = true;
   });
