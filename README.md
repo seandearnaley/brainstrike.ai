@@ -33,14 +33,17 @@ hook for `main` as the Actions secret `VERCEL_SITE_DEPLOY_HOOK` for that.
   and says Brainstrike is a desktop app.
 - **Read the release notes** opens a dialog with the notes and every
   download's SHA-256 checksum.
-- `public/backdrop.js` draws the backdrop: a wall of small glass tiles that
-  keeps time to a silent 96 BPM. Every 15 seconds a sweep flips the
-  Brainstrike bolt onto it in orange, lightning strikes down the bolt and a
-  wave flips the wall out from it; the pointer tilts the tiles near it. The
-  bolt goes where the page's still mark is laid out, so the CSS for
-  `.still-mark` decides where it is drawn. Without WebGPU the page keeps that
-  still mark, and the console says why; reduced motion draws one frame with
-  the bolt written.
+- `public/backdrop.js` draws the backdrop, a scene the visitor can play: one
+  WebGPU shader ray-marches a glass core that changes shape every four bars,
+  shards orbiting and streaming past, and a neon tunnel, all at 128 BPM; every
+  eight bars the colors move to the next area. Drag to orbit, scroll or pinch
+  to zoom, click the core to change its shape, click anywhere else to strike
+  lightning (on the next sixteenth note), and hold the core to stretch it.
+  The header shows the area and the bar.
+- `public/synth.js` is its music: a Web Audio synth on the scene's clock,
+  off until the visitor presses **Sound**.
+- Without WebGPU the page keeps a still gradient, and the console says why;
+  reduced motion draws one frame and takes no input.
 
 ## Environment
 

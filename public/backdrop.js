@@ -1,405 +1,84 @@
-// Flip field: the animated backdrop of brainstrike.ai, drawn with WebGPU.
+// The playable backdrop of brainstrike.ai, drawn with WebGPU.
 //
-// A wall of small metal tiles, seen in gentle perspective, keeps time to a
-// silent 96 BPM. Kicks ripple across it and hi-hats glint off single tiles.
-// Once a cycle a sweep crosses the screen and flips the tiles under the
-// Brainstrike bolt to their orange faces; on the next downbeat lightning
-// strikes down the bolt and a wave flips the wall out from it; then the bolt
-// flips back, top to bottom. Tiles near the pointer turn to face it.
+// One fragment shader ray-marches the whole scene: a glass core that changes
+// shape every four bars, five shards orbiting it, a field of chrome shards and
+// a hexagonal tunnel of neon rings streaming past at 128 BPM. Every eight bars
+// the scene moves to its next area and colors. A bloom pass and a composite
+// pass add glow, chromatic aberration, glitch tears and grain.
 //
-// Every tile's angle is a function of the cycle time, so the vertex shader
-// works it out and nothing is simulated. The tiles render with 4x MSAA into a
-// half-float target, lit by a procedural studio of soft boxes; a bloom and
-// tone-map pass draws the canvas.
-//
-// The bolt is drawn where the page's still mark (.still-mark) is laid out, so
-// CSS alone decides where it sits.
+// The visitor plays it: drag to orbit, scroll or pinch to zoom, click the core
+// to change its shape, click anywhere else to strike lightning there, and
+// press and drag the core to pull it out like taffy. Strikes land on the next
+// sixteenth note. With sound on (synth.js), the same clock plays the music.
 //
 // Without WebGPU, or when it fails, the page keeps its still backdrop and the
-// console says why. Reduced motion draws one frame with the bolt written. A
-// hidden tab stops the loop.
+// console says why. Reduced motion draws one frame and takes no input. A
+// hidden tab stops the loop and the sound.
+
+import { createSynth } from './synth.js';
 
 const canvas = document.querySelector('canvas.backdrop');
-const still = document.querySelector('.still-mark');
 const root = document.documentElement;
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
 
-// The wall keeps a silent 96 BPM, and a cycle is six bars.
-const BEAT = 60 / 96;
-const CYCLE = 24 * BEAT;
-const START = 4; // the page opens here, so the first sweep starts within a second
-const SWEEP_AT = 8 * BEAT; // bar three: the sweep crosses the screen in seven beats
-const SWEEP_LEN = 7 * BEAT;
-const STRIKE_AT = 16 * BEAT; // bar five's downbeat
-const ERASE_AT = 20 * BEAT; // bar six: the bolt flips back over two beats
-const ERASE_LEN = 2 * BEAT;
-const WAVE_SPEED = 1.8; // the strike's wave, in head heights per second
-
-// The camera, and the wall turned so its right side comes toward it.
-const DISTANCE = 3.6;
-const FOCAL = 1 / Math.tan(0.26); // a 30° vertical field of view
-const YAW = -0.17;
-const PITCH = -0.1;
-const NEAR = 0.5;
-const FAR = 12;
-
-const SAMPLES = 4;
+const BPM = 128;
+const BEAT = 60 / BPM;
+const FORM_BEATS = 16; // the core changes shape every four bars
+const AREA_BEATS = 32; // and the scene changes area every eight
+const FORMS = 5;
+const FOCAL = 1.9;
 const DPR_CAP = 1.5;
-const MAX_PIXELS = 2.2e6; // keeps the 4x multisampled targets small on large screens
-const MAX_TILES = 80000;
-const MAX_SEGMENTS = 512;
-const UNIFORM_FLOATS = 36;
+const UNIFORM_FLOATS = 88;
 
-// The bolt-shaped split between the head's two halves, in the icon's
-// 1024-unit coordinates (assets/icons/icon.svg in the brainstrike repo).
-const SPLIT = [
-  [626, 140],
-  [414, 440],
-  [557, 442],
-  [346, 769],
+// Each area's three colors, in linear RGB; the shader cycles through them.
+const AREAS = [
+  { colors: [[0.1, 0.9, 1], [0.45, 0.2, 1], [1, 0.2, 0.75]], name: 'Signal' },
+  { colors: [[0.6, 1, 0.25], [0, 0.8, 0.7], [0.25, 0.5, 1]], name: 'Bloom' },
+  { colors: [[1, 0.35, 0.3], [1, 0.75, 0.2], [1, 0.3, 0.65]], name: 'Solar' },
+  { colors: [[0.6, 0.45, 1], [0.8, 0.95, 1], [1, 0.5, 0.8]], name: 'Euphoria' },
 ];
-
-const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
-const add = (a, b, k = 1) => [a[0] + b[0] * k, a[1] + b[1] * k, a[2] + b[2] * k];
-const norm = (a) => {
-  const length = Math.hypot(...a);
-  return a.map((v) => v / length);
-};
-const vec3 = (a) => `vec3f(${a.map((v) => v.toFixed(5)).join(', ')})`;
-
-const WALL_X = [Math.cos(YAW), 0, -Math.sin(YAW)];
-const WALL_Y = [Math.sin(PITCH) * Math.sin(YAW), Math.cos(PITCH), Math.sin(PITCH) * Math.cos(YAW)];
-const WALL_N = [Math.cos(PITCH) * Math.sin(YAW), -Math.sin(PITCH), Math.cos(PITCH) * Math.cos(YAW)];
-
-// The studio the tiles reflect: a key soft box behind the camera, a wide panel
-// light overhead and a warm bounce from the floor. Tiles that tip back catch
-// the panel; tiles that tip forward catch the floor.
-const studioLight = (name, direction, color) => {
-  const c = norm(direction);
-  const x = norm(cross([0, 1, 0], c));
-  return `const ${name} = ${vec3(c)};
-const ${name}_X = ${vec3(x)};
-const ${name}_Y = ${vec3(cross(c, x))};
-const ${name}_COLOR = ${vec3(color)};
-`;
-};
 
 const COMMON = /* wgsl */ `
 struct U {
-  eye: vec3f, aspect: f32,
+  res: vec2f, time: f32, beat: f32,
+  eye: vec3f, kick: f32,
   right: vec3f, focal: f32,
-  up: vec3f, cycle: f32,
-  forward: vec3f, time: f32,
-  wallX: vec3f, unit: f32,
-  wallY: vec3f, half: f32,
-  wallN: vec3f, thick: f32,
-  pointer: vec2f, pointerAmt: f32, boltLight: f32,
-  boltCenter: vec2f, pad0: f32, pad1: f32,
+  up: vec3f, glitch: f32,
+  fwd: vec3f, flight: f32,
+  shift: vec2f, morph: f32, formA: f32,
+  formB: f32, wave: f32, boltLight: f32, slice: f32,
+  grabA: vec3f, grab: f32,
+  grabB: vec3f, steps: f32,
+  colA: vec4f, colB: vec4f, colC: vec4f, flash: vec4f,
+  bolt: array<vec4f, 9>,
 };
-
-fn onWall(p: vec2f, lift: f32) -> vec3f {
-  return u.wallX * p.x + u.wallY * p.y + u.wallN * lift;
-}
-
-fn project(w: vec3f) -> vec4f {
-  let r = w - u.eye;
-  let z = dot(r, u.forward);
-  return vec4f(dot(r, u.right) * u.focal / u.aspect, dot(r, u.up) * u.focal, (z - ${NEAR}) * ${FAR / (FAR - NEAR)}, z);
-}
-`;
-
-const TILES = /* wgsl */ `${COMMON}
-struct Tile { pos: vec2f, sweep: f32, bolt: f32, dist: f32, along: f32, seed: f32, pad0: f32 };
 @group(0) @binding(0) var<uniform> u: U;
-@group(0) @binding(1) var<storage, read> tiles: array<Tile>;
 
 const PI: f32 = 3.14159265;
-const BEAT: f32 = ${BEAT};
-const SWEEP_AT: f32 = ${SWEEP_AT};
-const SWEEP_LEN: f32 = ${SWEEP_LEN};
-const STRIKE_AT: f32 = ${STRIKE_AT};
-const ERASE_AT: f32 = ${ERASE_AT};
-const ERASE_LEN: f32 = ${ERASE_LEN};
-const WAVE_SPEED: f32 = ${WAVE_SPEED};
-const SPIN_BAND: f32 = 0.22; // head heights from the bolt
-${studioLight('KEY', [-0.3, 0.36, 0.88], [5, 4.8, 4.5])}
-${studioLight('PANEL', [-0.1, 0.87, 0.48], [3.4, 3.5, 3.7])}
-${studioLight('WARM', [-0.15, -0.45, 0.88], [1.2, 0.32, 0.1])}
+const TAU: f32 = 6.28318531;
 
-fn hash(x: u32) -> u32 {
-  var v = x;
-  v ^= v >> 16u;
-  v *= 0x7feb352du;
-  v ^= v >> 15u;
-  v *= 0x846ca68bu;
-  v ^= v >> 16u;
-  return v;
+fn hash11(x: f32) -> f32 {
+  return fract(sin(x * 91.3458) * 47453.5453);
 }
 
-fn rand(x: u32) -> f32 {
-  return f32(hash(x) >> 8u) / 16777216.0;
+fn hash31(p: vec3f) -> f32 {
+  return fract(sin(dot(p, vec3f(127.1, 311.7, 74.7))) * 43758.5453);
 }
 
-// A flap's step from 0 to 1, starting when a = 0: a lightly damped spring, so
-// it snaps over and settles with one small bounce.
-fn snap(a: f32) -> f32 {
-  if (a <= 0.0) {
-    return 0.0;
-  }
-  let w = 24.0;
-  let z = 0.55;
-  let wd = w * sqrt(1.0 - z * z);
-  return 1.0 - exp(-z * w * a) * (cos(wd * a) + z * w / wd * sin(wd * a));
+fn rot(a: f32) -> mat2x2f {
+  let c = cos(a);
+  let s = sin(a);
+  return mat2x2f(c, s, -s, c);
 }
 
-// A tile spinning right round, from 0 to 1 turn: a slower, softer spring.
-fn spin(a: f32) -> f32 {
-  if (a <= 0.0) {
-    return 0.0;
-  }
-  let w = 13.0;
-  let z = 0.6;
-  let wd = w * sqrt(1.0 - z * z);
-  return 1.0 - exp(-z * w * a) * (cos(wd * a) + z * w / wd * sin(wd * a));
-}
-
-// A knock: the same spring struck rather than stepped. It swings to 1, back
-// past 0 a little and settles within half a second.
-fn knock(a: f32) -> f32 {
-  if (a <= 0.0) {
-    return 0.0;
-  }
-  return exp(-5.0 * a) * sin(8.66 * a) / 0.473;
-}
-
-// The tile's turn about its own horizontal axis (x) and its lean about its
-// vertical one (y) at cycle time c. A positive turn tips its top toward the
-// camera.
-fn turn(t: Tile, i: u32, c: f32) -> vec2f {
-  var a = 0.0;
-  var b = 0.0;
-  // The groove drops out while the strike's wave crosses the wall.
-  let groove = 1.0 - smoothstep(STRIKE_AT - 0.3, STRIKE_AT, c) * (1.0 - smoothstep(STRIKE_AT + 2.0, STRIKE_AT + 3.0, c));
-  // Kicks on beats one and three ring out from the bolt, tipping tiles back
-  // into the panel light; the bar's downbeat hits hardest.
-  let r = length(t.pos - u.boltCenter) / u.unit;
-  let kick = floor(c / (2.0 * BEAT));
-  for (var k = 0.0; k < 2.0; k += 1.0) {
-    let n = kick - k;
-    let age = c - n * 2.0 * BEAT;
-    if (n >= 0.0) {
-      let ring = exp(-pow((r - 0.2 - age * 1.7) / 0.14, 2.0)) * exp(-age * 1.2) * (1.0 - exp(-age * 14.0));
-      a -= ring * select(0.2, 0.32, n % 2.0 == 0.0) * groove;
-    }
-  }
-  // Hi-hats: on every eighth note a few tiles glint in the panel light.
-  let eighth = floor(c / (0.5 * BEAT));
-  if (rand(hash(i) ^ (u32(eighth) * 0x85ebca6bu)) < 0.002) {
-    a -= 0.45 * max(knock(c - eighth * 0.5 * BEAT), 0.0) * groove;
-  }
-  let swept = SWEEP_AT + t.sweep * SWEEP_LEN;
-  if (t.bolt > 0.5) {
-    // The bolt's tiles flip to their orange faces as the sweep passes, and
-    // flip on round again in bar six, top to bottom on sixteenth notes.
-    let erase = ERASE_AT + floor(t.along * 8.0) / 8.0 * ERASE_LEN;
-    a += PI * (snap(c - swept) + snap(c - erase));
-  } else {
-    // Every other tile tips back into the overhead panel's light as the sweep
-    // passes, so the sweep is a bar of light.
-    a -= 0.45 * (snap(c - swept) - snap(c - swept - 0.2));
-    // The strike's wave runs out from the bolt, so its front keeps the bolt's
-    // zig-zag: tiles near the bolt spin right round, and farther out they
-    // knock back into the panel light, less the farther they are.
-    let hit = c - STRIKE_AT - t.dist / WAVE_SPEED;
-    if (t.dist < SPIN_BAND) {
-      a += 2.0 * PI * spin(hit);
-    } else {
-      a -= 1.1 * exp(-(t.dist - SPIN_BAND) / 0.7) * knock(hit);
-    }
-  }
-  if (u.pointerAmt > 0.0) {
-    let d = (t.pos - u.pointer) / u.unit;
-    let fall = exp(-dot(d, d) / 0.05) * u.pointerAmt * 0.5;
-    a += clamp(d.y * 4.0, -1.0, 1.0) * fall;
-    b -= clamp(d.x * 4.0, -1.0, 1.0) * fall;
-  }
-  return vec2f(a, b);
-}
-
-// How brightly the bolt's orange faces glow: barely while written, warming as
-// the strike nears; the lightning lights them white-hot and they cool to
-// embers.
-fn glow(t: Tile, c: f32) -> f32 {
-  let swept = SWEEP_AT + t.sweep * SWEEP_LEN;
-  let charge = smoothstep(swept, STRIKE_AT, c) * step(c, STRIKE_AT);
-  let after = select(0.0, exp(-(c - STRIKE_AT) / 1.2), c >= STRIKE_AT);
-  return 0.06 + 0.3 * charge * charge + 1.6 * after + u.boltLight * 2.5;
-}
-
-struct TOut {
-  @builtin(position) clip: vec4f,
-  @location(0) world: vec3f,
-  @location(1) normal: vec3f,
-  @location(2) side: vec3f,
-  @location(3) rise: vec3f,
-  @location(4) uv: vec2f,
-  @location(5) @interpolate(flat) face: u32,
-  @location(6) @interpolate(flat) look: vec4f,
-};
-
-// One box per tile: its front (face 0), its back (1) and four thin edges.
-@vertex
-fn vs(@builtin(vertex_index) v: u32, @builtin(instance_index) i: u32) -> TOut {
-  let t = tiles[i];
-  var quad = array<vec2f, 6>(
-    vec2f(-1.0, -1.0), vec2f(1.0, -1.0), vec2f(-1.0, 1.0),
-    vec2f(-1.0, 1.0), vec2f(1.0, -1.0), vec2f(1.0, 1.0)
-  );
-  let q = quad[v % 6u];
-  let face = v / 6u;
-  let h = u.half;
-  let d = u.thick;
-  var p = vec3f(q * h, d);
-  var n = vec3f(0.0, 0.0, 1.0);
-  switch face {
-    case 1u: { p = vec3f(q * h, -d); n = vec3f(0.0, 0.0, -1.0); }
-    case 2u: { p = vec3f(h, q.x * h, q.y * d); n = vec3f(1.0, 0.0, 0.0); }
-    case 3u: { p = vec3f(-h, q.x * h, q.y * d); n = vec3f(-1.0, 0.0, 0.0); }
-    case 4u: { p = vec3f(q.x * h, h, q.y * d); n = vec3f(0.0, 1.0, 0.0); }
-    case 5u: { p = vec3f(q.x * h, -h, q.y * d); n = vec3f(0.0, -1.0, 0.0); }
-    default: {}
-  }
-  let ab = turn(t, i, u.cycle);
-  let ca = cos(ab.x);
-  let sa = sin(ab.x);
-  let cb = cos(ab.y);
-  let sb = sin(ab.y);
-  // The tile's own turn (about x, then y), then the wall's.
-  let m = mat3x3f(u.wallX, u.wallY, u.wallN) *
-    mat3x3f(vec3f(cb, 0.0, -sb), vec3f(sb * sa, ca, cb * sa), vec3f(sb * ca, -sa, cb * ca));
-  let world = onWall(t.pos, 0.0) + m * p;
-  var o: TOut;
-  o.clip = project(world);
-  o.world = world;
-  o.normal = m * n;
-  o.side = m[0];
-  o.rise = m[1];
-  o.uv = q;
-  o.face = face;
-  o.look = vec4f(t.bolt, select(0.0, glow(t, u.cycle), t.bolt > 0.5), t.seed, t.dist);
-  return o;
-}
-
-fn softbox(r: vec3f, c: vec3f, x: vec3f, y: vec3f, size: vec2f, soft: f32) -> f32 {
-  let k = dot(r, c);
-  if (k <= 0.0) {
-    return 0.0;
-  }
-  let q = abs(vec2f(dot(r, x), dot(r, y)) / k) - size;
-  return (1.0 - smoothstep(-soft, soft, q.x)) * (1.0 - smoothstep(-soft, soft, q.y));
-}
-
-// The studio seen along r; a rougher surface sees it softer and dimmer.
-fn env(r: vec3f, rough: f32) -> vec3f {
-  let soft = 0.02 + rough * 0.6;
-  let dim = 1.0 / (1.0 + rough * 4.0);
-  var e = mix(vec3f(0.0012, 0.0013, 0.0016), vec3f(0.008, 0.0085, 0.01), smoothstep(-0.6, 0.9, r.y));
-  e += KEY_COLOR * softbox(r, KEY, KEY_X, KEY_Y, vec2f(0.12, 0.07), soft) * dim;
-  e += PANEL_COLOR * softbox(r, PANEL, PANEL_X, PANEL_Y, vec2f(1.6, 0.3), soft) * dim;
-  e += WARM_COLOR * softbox(r, WARM, WARM_X, WARM_Y, vec2f(0.5, 0.22), soft + 0.2);
-  return e;
-}
-
-fn irradiance(n: vec3f) -> vec3f {
-  return KEY_COLOR * max(dot(n, KEY), 0.0) * 0.08 + WARM_COLOR * max(dot(n, WARM), 0.0) * 0.2 + vec3f(0.004);
-}
-
-@fragment
-fn fs(in: TOut) -> @location(0) vec4f {
-  var n = normalize(in.normal);
-  let seed = in.look.z;
-  if (in.face < 2u) {
-    // A chamfer round each face: the normal leans out toward the nearest
-    // edge, so each tile's top edge catches the panel light overhead.
-    let e = abs(in.uv);
-    let edge = smoothstep(0.8, 1.0, max(e.x, e.y));
-    let out = select(vec2f(0.0, sign(in.uv.y)), vec2f(sign(in.uv.x), 0.0), e.x > e.y);
-    n = normalize(n + (normalize(in.side) * out.x + normalize(in.rise) * out.y) * edge * 0.5);
-  }
-  var f0 = vec3f(0.62, 0.6, 0.57); // the edges: brushed steel
-  var rough = 0.3;
-  var albedo = vec3f(0.0);
-  var emit = vec3f(0.0);
-  if (in.face == 0u) {
-    // The front: glossy black glass, each tile a little different, so the
-    // studio's reflection breaks up across them.
-    f0 = vec3f(0.04) * (0.8 + 0.4 * seed);
-    rough = 0.08 + 0.08 * seed;
-  } else if (in.face == 1u && in.look.x > 0.5) {
-    // The bolt's back: satin orange enamel, glowing.
-    f0 = vec3f(0.02);
-    rough = 0.22;
-    albedo = vec3f(1.0, 0.09, 0.033) * 0.5;
-    let g = in.look.y;
-    emit = vec3f(1.0, 0.16, 0.05) * g + vec3f(1.0, 0.75, 0.55) * max(g - 1.6, 0.0) * 0.8;
-  } else if (in.face == 1u) {
-    // Every other back: polished champagne metal.
-    f0 = vec3f(0.8, 0.74, 0.66);
-    rough = 0.2 + 0.1 * seed;
-  }
-  let v = normalize(u.eye - in.world);
-  let nv = max(dot(n, v), 1e-3);
-  let fr = f0 + (1.0 - f0) * pow(1.0 - nv, 5.0);
-  var c = env(reflect(-v, n), rough) * fr + albedo * irradiance(n) * (1.0 - fr) + emit;
-  // The lightning lights the tiles around it.
-  c += vec3f(1.0, 0.62, 0.42) * u.boltLight * exp(-in.look.w / 0.15) * (0.08 + fr.x);
-  return vec4f(c, 1.0);
-}
-`;
-
-const BOLTS = /* wgsl */ `${COMMON}
-struct Seg { a: vec2f, b: vec2f, width: f32, glow: f32, pad0: f32, pad1: f32 };
-@group(0) @binding(0) var<uniform> u: U;
-@group(0) @binding(1) var<storage, read> segs: array<Seg>;
-
-struct BOut {
-  @builtin(position) clip: vec4f,
-  @location(0) world: vec2f,
-  @location(1) @interpolate(flat) seg: u32,
-};
-
-// One quad per segment on the wall, just in front of the tiles, wide enough
-// for its glow.
-@vertex
-fn vs(@builtin(vertex_index) v: u32, @builtin(instance_index) s: u32) -> BOut {
-  let seg = segs[s];
-  var corners = array<vec2f, 6>(
-    vec2f(0.0, 0.0), vec2f(1.0, 0.0), vec2f(0.0, 1.0),
-    vec2f(0.0, 1.0), vec2f(1.0, 0.0), vec2f(1.0, 1.0)
-  );
-  let c = corners[v];
-  let len = length(seg.b - seg.a);
-  let dir = (seg.b - seg.a) / max(len, 1e-6);
-  let r = seg.width * seg.glow;
-  let world = seg.a + dir * mix(-r, len + r, c.x) + vec2f(-dir.y, dir.x) * mix(-r, r, c.y);
-  var o: BOut;
-  o.clip = project(onWall(world, u.thick * 4.0));
-  o.world = world;
-  o.seg = s;
-  return o;
-}
-
-@fragment
-fn fs(in: BOut) -> @location(0) vec4f {
-  let seg = segs[in.seg];
-  let ab = seg.b - seg.a;
-  let k = clamp(dot(in.world - seg.a, ab) / max(dot(ab, ab), 1e-8), 0.0, 1.0);
-  let d = length(in.world - (seg.a + ab * k));
-  let core = exp(-pow(d / seg.width, 2.0));
-  let glow = exp(-d / (seg.width * seg.glow * 0.25));
-  let c = vec3f(1.0, 0.96, 0.92) * core * 6.0 + vec3f(1.0, 0.38, 0.16) * glow * 1.2;
-  return vec4f(c * u.boltLight, 1.0);
+// The area's colors as a loop: 0, 1/3 and 2/3 are its three colors.
+fn pal(t: f32) -> vec3f {
+  let f = fract(t) * 3.0;
+  let k = smoothstep(0.0, 1.0, fract(f));
+  let i = floor(f);
+  let a = select(select(u.colC.xyz, u.colB.xyz, i < 1.5), u.colA.xyz, i < 0.5);
+  let b = select(select(u.colA.xyz, u.colC.xyz, i < 1.5), u.colB.xyz, i < 0.5);
+  return mix(a, b, k);
 }
 `;
 
@@ -414,6 +93,301 @@ fn vs(@builtin(vertex_index) v: u32) -> FOut {
   o.clip = vec4f(p, 0.0, 1.0);
   o.uv = vec2f(p.x * 0.5 + 0.5, 0.5 - p.y * 0.5);
   return o;
+}
+`;
+
+const SCENE = /* wgsl */ `${COMMON}${FULLSCREEN}
+const TUNNEL: f32 = 11.5;
+const RING_GAP: f32 = 6.0;
+const CELL: f32 = 2.6;
+const FAR: f32 = 48.0;
+
+fn smin(a: f32, b: f32, k: f32) -> f32 {
+  let h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
+  return mix(b, a, h) - k * h * (1.0 - h);
+}
+
+fn sdOcta(p: vec3f, s: f32) -> f32 {
+  let q = abs(p);
+  return (q.x + q.y + q.z - s) * 0.57735027;
+}
+
+fn sdTorus(p: vec3f, t: vec2f) -> f32 {
+  return length(vec2f(length(p.xz) - t.x, p.y)) - t.y;
+}
+
+fn sdBoxFrame(p0: vec3f, b: vec3f, e: f32) -> f32 {
+  let p = abs(p0) - b;
+  let q = abs(p + e) - e;
+  return min(
+    min(
+      length(max(vec3f(p.x, q.y, q.z), vec3f(0.0))) + min(max(p.x, max(q.y, q.z)), 0.0),
+      length(max(vec3f(q.x, p.y, q.z), vec3f(0.0))) + min(max(q.x, max(p.y, q.z)), 0.0)
+    ),
+    length(max(vec3f(q.x, q.y, p.z), vec3f(0.0))) + min(max(q.x, max(q.y, p.z)), 0.0)
+  );
+}
+
+fn sdCapsule(p: vec3f, a: vec3f, b: vec3f, r: f32) -> f32 {
+  let pa = p - a;
+  let ba = b - a;
+  let h = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-6), 0.0, 1.0);
+  return length(pa - ba * h) - r;
+}
+
+fn sdHex(p0: vec2f, r: f32) -> f32 {
+  let k = vec3f(-0.866025404, 0.5, 0.577350269);
+  var p = abs(p0);
+  p -= 2.0 * min(dot(k.xy, p), 0.0) * k.xy;
+  p -= vec2f(clamp(p.x, -k.z * r, k.z * r), r);
+  return length(p) * sign(p.y);
+}
+
+fn gyroid(p: vec3f) -> f32 {
+  return dot(sin(p), cos(p.yzx));
+}
+
+// The core's five shapes, each about two and a half units across: a
+// breathing blob, an octahedron, a torus, a wire cube and a gyroid lattice
+// inside a sphere.
+fn form(i: i32, p: vec3f) -> f32 {
+  switch i {
+    case 0: {
+      return (length(p) - 1.15 - 0.09 * gyroid(p * 3.2 + u.time * 0.8)) * 0.8;
+    }
+    case 1: {
+      return sdOcta(p, 1.65) - 0.04;
+    }
+    case 2: {
+      return sdTorus(p, vec2f(1.05, 0.32));
+    }
+    case 3: {
+      return sdBoxFrame(p, vec3f(0.92), 0.07) - 0.02;
+    }
+    default: {
+      return max(length(p) - 1.3, (abs(gyroid(p * 3.6)) / 3.6 - 0.07) * 0.8);
+    }
+  }
+}
+
+fn core(p0: vec3f) -> f32 {
+  let s = 1.0 + 0.07 * u.kick;
+  var p = p0 / s;
+  let xz = rot(u.time * 0.31) * vec2f(p.x, p.z);
+  p = vec3f(xz.x, p.y, xz.y);
+  let yz = rot(u.time * 0.19) * vec2f(p.y, p.z);
+  p = vec3f(p.x, yz.x, yz.y);
+  // While it changes shape, the core tears into sliding bands.
+  let band = floor(p.y * 9.0 + u.time * 13.0);
+  p.x += (hash11(band) - 0.5) * 0.6 * u.slice;
+  var d = mix(form(i32(u.formA), p), form(i32(u.formB), p), u.morph) * s;
+  if (u.grab > 0.001) {
+    // Pulled out like taffy: a tendril to the pointer, thinner as it stretches.
+    let stretch = clamp(distance(u.grabA, u.grabB) / 3.2, 0.0, 1.0);
+    d = smin(d, sdCapsule(p0, u.grabA, u.grabB, mix(0.34, 0.1, stretch) * u.grab), 0.5 * u.grab + 0.001);
+  }
+  return d;
+}
+
+fn orbiters(p: vec3f) -> f32 {
+  var d = 1e9;
+  for (var i = 0; i < 5; i++) {
+    let f = f32(i);
+    let a = u.time * (0.45 + f * 0.11) + f * 1.2566;
+    var c = vec3f(cos(a) * 2.6, 0.0, sin(a) * 2.6);
+    let tilt = rot(f * 0.7 - 1.0) * vec2f(c.y, c.z);
+    c = vec3f(c.x, tilt.x, tilt.y);
+    var q = p - c;
+    let spin = rot(u.time * 1.3 + f) * q.xy;
+    q = vec3f(spin, q.z);
+    d = min(d, sdOcta(q, 0.24 + 0.1 * u.kick));
+  }
+  return d;
+}
+
+// A field of chrome shards between the core and the tunnel, streaming past.
+// x is the distance, y the shard's random tag.
+fn shards(p0: vec3f) -> vec2f {
+  let p = vec3f(p0.xy, p0.z - u.flight);
+  let id = floor(p / CELL + 0.5);
+  let q = p - id * CELL;
+  let h = hash31(id);
+  // Never step past a neighbor's shard: none reaches more than 0.5 from the
+  // middle of its cell.
+  let safe = CELL - 0.5 - max(abs(q.x), max(abs(q.y), abs(q.z)));
+  let rad = length(id.xy * CELL);
+  if (rad < 3.8 || rad > 9.8 || h < 0.55) {
+    return vec2f(safe, h);
+  }
+  let a = rot(u.time * (0.6 + h) + h * 6.0) * q.xy;
+  var r = vec3f(a, q.z);
+  let b = rot(u.time * 0.8 + h * 3.0) * vec2f(r.y, r.z);
+  r = vec3f(r.x, b.x, b.y);
+  return vec2f(min(sdOcta(r, 0.2 + 0.3 * fract(h * 7.3)), safe), h);
+}
+
+// The tunnel's neon rings; y is the ring's index.
+fn rings(p0: vec3f) -> vec2f {
+  let z = p0.z - u.flight;
+  let cell = floor(z / RING_GAP + 0.5);
+  let xy = rot(cell * 0.35 + u.time * 0.05) * p0.xy;
+  let d = length(vec2f(sdHex(xy, TUNNEL + sin(cell * 1.7) * 0.7), z - cell * RING_GAP)) - 0.035;
+  return vec2f(d, cell);
+}
+
+// Six rails of light along the tunnel.
+fn rails(p: vec3f) -> f32 {
+  let sector = round(atan2(p.y, p.x) / (TAU / 6.0));
+  let xy = rot(-sector * TAU / 6.0) * p.xy;
+  return length(xy - vec2f(TUNNEL * 1.22, 0.0)) - 0.02;
+}
+
+fn bolt(p: vec3f) -> f32 {
+  var d = 1e9;
+  for (var i = 0; i < 8; i++) {
+    d = min(d, sdCapsule(p, u.bolt[i].xyz, u.bolt[i + 1].xyz, 0.01));
+  }
+  return d;
+}
+
+fn solids(p: vec3f) -> f32 {
+  return min(orbiters(p), shards(p).x);
+}
+
+fn coreNormal(p: vec3f) -> vec3f {
+  let e = vec2f(0.0015, -0.0015);
+  return normalize(
+    e.xyy * core(p + e.xyy) + e.yyx * core(p + e.yyx) + e.yxy * core(p + e.yxy) + e.xxx * core(p + e.xxx)
+  );
+}
+
+fn solidNormal(p: vec3f) -> vec3f {
+  let e = vec2f(0.0015, -0.0015);
+  return normalize(
+    e.xyy * solids(p + e.xyy) + e.yyx * solids(p + e.yyx) + e.yxy * solids(p + e.yxy) + e.xxx * solids(p + e.xxx)
+  );
+}
+
+// Deep space in the area's colors: a slow nebula and a few stars.
+fn sky(rd: vec3f) -> vec3f {
+  let n = sin(rd.x * 3.1 + u.time * 0.05) * sin(rd.y * 4.3 - u.time * 0.04) * sin(rd.z * 2.7 + 1.3) +
+    0.5 * sin(rd.x * 7.9 - rd.z * 5.1 + u.time * 0.08) * sin(rd.y * 8.3 + rd.x * 3.0);
+  var c = mix(u.colB.xyz * 0.008, pal(0.3 + n * 0.25 + rd.y * 0.2) * 0.12, smoothstep(-0.3, 1.4, n));
+  let g = rd * 150.0;
+  let h = hash31(floor(g));
+  c += vec3f(step(0.996, h) * smoothstep(0.45, 0.0, length(fract(g) - 0.5)) * (0.5 + 0.5 * sin(u.time * 3.0 + h * 50.0)));
+  return c;
+}
+
+// What a mirror sees: the sky, the tunnel's rings sweeping past and a light
+// overhead.
+fn env(r: vec3f) -> vec3f {
+  let sweep = smoothstep(0.9, 1.0, sin(r.z * 7.0 + u.flight * 1.1));
+  return sky(r) * 2.0 + pal(r.z * 0.3 + u.beat * 0.02) * sweep * 0.7 +
+    vec3f(1.0) * pow(max(dot(r, normalize(vec3f(0.3, 0.9, 0.4))), 0.0), 30.0) * 2.5;
+}
+
+fn shadeCore(p: vec3f, rd: vec3f) -> vec3f {
+  let n = coreNormal(p);
+  let nv = clamp(dot(n, -rd), 0.0, 1.0);
+  let fres = pow(1.0 - nv, 3.0);
+  // Thin film: the hue shifts with the angle the surface is seen at.
+  let film = pal(nv * 1.4 + u.beat * 0.03 + 0.15);
+  let through = sky(refract(rd, n, 0.7)) * 3.0 + film * 0.12;
+  let mirror = env(reflect(rd, n)) * mix(vec3f(0.3), film, 0.7);
+  // Veins of light drift through the glass and flare on every kick.
+  let veins = pow(abs(sin(gyroid(p * 4.5 + u.time * 0.5) * 3.0)), 24.0);
+  let glow = film * (0.05 + 0.7 * u.kick + veins * (0.2 + 1.2 * u.kick)) * (1.0 - fres);
+  return through * film * (1.0 - fres) + mirror * (0.35 + 1.6 * fres) + glow;
+}
+
+fn shadeSolid(p: vec3f, rd: vec3f, tag: f32) -> vec3f {
+  let n = solidNormal(p);
+  let fres = pow(1.0 - clamp(dot(n, -rd), 0.0, 1.0), 4.0);
+  let tint = pal(tag * 3.0 + u.beat * 0.05);
+  return env(reflect(rd, n)) * mix(tint, vec3f(1.0), 0.35) * (0.7 + 1.4 * fres) + tint * 0.06;
+}
+
+@fragment
+fn march(in: FOut) -> @location(0) vec4f {
+  let ndc = vec2f(in.uv.x * 2.0 - 1.0, 1.0 - in.uv.y * 2.0);
+  let aspect = u.res.x / u.res.y;
+  let rd = normalize(u.fwd * u.focal + u.right * (ndc.x * aspect + u.shift.x) + u.up * (ndc.y + u.shift.y));
+  let ro = u.eye;
+  var t = 0.0;
+  var glow = vec3f(0.0);
+  var hit = 0;
+  var tag = 0.0;
+  var ring = 0.0;
+  let striking = u.boltLight > 0.01;
+  for (var i = 0; i < 128; i++) {
+    if (f32(i) >= u.steps) {
+      break;
+    }
+    let p = ro + rd * t;
+    let dc = core(p);
+    let dob = orbiters(p);
+    let sh = shards(p);
+    let rg = rings(p);
+    let dr = rails(p);
+    let solid = min(min(dc, dob), min(sh.x, min(rg.x, dr)));
+    // The lightning only glows; rays slow down near it but pass through.
+    var db = 1e9;
+    var d = solid;
+    if (striking) {
+      db = bolt(p);
+      d = min(d, max(db, 0.012));
+    }
+    let adv = max(d * 0.8, 0.004);
+    // A pulse runs down the tunnel's rings on every bar.
+    let flash = exp(-fract(u.beat * 0.25 - rg.y * 0.0625) * 5.0);
+    glow += pal(rg.y * 0.13 + u.beat * 0.02) * (0.5 + 2.5 * flash) * exp(-rg.x * 22.0) * adv * 1.6;
+    glow += pal(atan2(p.y, p.x) * 0.16 + 0.5) * exp(-dr * 26.0) * adv * 0.7;
+    glow += pal(0.5 + u.beat * 0.01) * exp(-max(dc, 0.0) * 3.0) * adv * (0.012 + 0.05 * u.kick);
+    if (u.wave > 0.0) {
+      let shell = abs(length(p) - u.wave);
+      glow += pal(0.8) * exp(-shell * 9.0) * adv * 0.12 * exp(-u.wave * 0.15);
+    }
+    if (striking) {
+      glow += (vec3f(1.0, 0.95, 1.0) * exp(-db * 40.0) * 2.4 + pal(0.6) * exp(-db * 5.0) * 0.14) * adv * u.boltLight;
+    }
+    if (solid < 0.0008 + 0.0012 * t) {
+      if (solid == dc) {
+        hit = 1;
+      } else if (solid == dob) {
+        hit = 2;
+      } else if (solid == sh.x) {
+        hit = 2;
+        tag = sh.y;
+      } else if (solid == rg.x) {
+        hit = 3;
+        ring = rg.y;
+      } else {
+        hit = 4;
+      }
+      break;
+    }
+    t += adv;
+    if (t > FAR) {
+      break;
+    }
+  }
+  let p = ro + rd * t;
+  var c = sky(rd);
+  if (hit == 1) {
+    c = shadeCore(p, rd);
+  } else if (hit == 2) {
+    c = shadeSolid(p, rd, tag);
+  } else if (hit == 3) {
+    c = pal(ring * 0.13 + u.beat * 0.02) * 3.0;
+  } else if (hit == 4) {
+    c = pal(atan2(p.y, p.x) * 0.16 + 0.5) * 2.0;
+  }
+  if (hit > 0) {
+    c = mix(c, sky(rd), 1.0 - exp(-max(t - 5.0, 0.0) * 0.04));
+  }
+  c += glow + u.flash.xyz * u.flash.w;
+  return vec4f(c, 1.0);
 }
 `;
 
@@ -447,10 +421,9 @@ fn blur(in: FOut) -> @location(0) vec4f {
 `;
 
 const COMPOSITE = /* wgsl */ `${COMMON}${FULLSCREEN}
-@group(0) @binding(0) var scene: texture_2d<f32>;
-@group(0) @binding(1) var bloom: texture_2d<f32>;
-@group(0) @binding(2) var samp: sampler;
-@group(0) @binding(3) var<uniform> u: U;
+@group(0) @binding(1) var scene: texture_2d<f32>;
+@group(0) @binding(2) var bloom: texture_2d<f32>;
+@group(0) @binding(3) var samp: sampler;
 
 fn aces(x: vec3f) -> vec3f {
   return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), vec3f(0.0), vec3f(1.0));
@@ -458,12 +431,28 @@ fn aces(x: vec3f) -> vec3f {
 
 @fragment
 fn fs(in: FOut) -> @location(0) vec4f {
-  var c = textureSample(scene, samp, in.uv).rgb + textureSample(bloom, samp, in.uv).rgb * 0.7;
+  var uv = in.uv;
+  let g = u.glitch;
+  // Glitch: rows of the picture tear sideways, a new set thirty times a second.
+  let row = floor(uv.y * 40.0);
+  let frame = floor(u.time * 30.0);
+  if (hash11(row + frame * 7.0) > 1.0 - g * 0.5) {
+    uv.x += (hash11(row * 3.1 + frame) - 0.5) * 0.14 * g;
+  }
+  // Chromatic aberration, wider toward the edges and in a glitch.
+  let off = (uv - 0.5) * (0.004 + g * 0.03);
+  var c = vec3f(
+    textureSample(scene, samp, uv - off).r,
+    textureSample(scene, samp, uv).g,
+    textureSample(scene, samp, uv + off).b
+  );
+  c += textureSample(bloom, samp, uv).rgb * 0.9;
+  c *= 1.0 - g * 0.12 * (0.5 + 0.5 * sin(in.clip.y * 2.1));
   let q = in.uv - 0.5;
-  c *= 1.0 - dot(q, q) * 0.9;
+  c *= 1.0 - dot(q, q) * 0.7;
   c = pow(aces(c), vec3f(1.0 / 2.2));
   let n = fract(sin(dot(in.clip.xy + fract(u.time) * 97.0, vec2f(12.9898, 78.233))) * 43758.5453);
-  return vec4f(c + (n - 0.5) * 0.02, 1.0);
+  return vec4f(c + (n - 0.5) * 0.025, 1.0);
 }
 `;
 
@@ -476,6 +465,14 @@ const smoothstep = (a, b, x) => {
   const t = Math.min(Math.max((x - a) / (b - a), 0), 1);
   return t * t * (3 - 2 * t);
 };
+const clamp = (x, a, b) => Math.min(Math.max(x, a), b);
+const add = (a, b, k = 1) => [a[0] + b[0] * k, a[1] + b[1] * k, a[2] + b[2] * k];
+const scale = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
+const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const length = (a) => Math.hypot(a[0], a[1], a[2]);
+const norm = (a) => scale(a, 1 / (length(a) || 1));
+const mixColor = (a, b, k) => a.map((v, i) => v + (b[i] - v) * k);
 
 async function compile(device, code, label) {
   const module = device.createShaderModule({ code, label });
@@ -486,89 +483,50 @@ async function compile(device, code, label) {
   return module;
 }
 
-// The point of a polyline nearest p: its distance, and how far along the line
-// it lies.
-function nearest(line, p) {
-  let best = { d: Number.POSITIVE_INFINITY, s: 0 };
-  let run = 0;
-  for (let i = 1; i < line.length; i += 1) {
-    const [ax, ay] = line[i - 1];
-    const dx = line[i][0] - ax;
-    const dy = line[i][1] - ay;
-    const length = Math.hypot(dx, dy);
-    const k = Math.min(Math.max(((p[0] - ax) * dx + (p[1] - ay) * dy) / (length * length), 0), 1);
-    const d = Math.hypot(p[0] - ax - dx * k, p[1] - ay - dy * k);
-    if (d < best.d) {
-      best = { d, s: run + k * length };
-    }
-    run += length;
+// A camera on a sphere round the core, looking at it, rolled a little.
+function orbitCamera(yaw, pitch, distance, roll) {
+  const eye = [
+    distance * Math.cos(pitch) * Math.sin(yaw),
+    distance * Math.sin(pitch),
+    distance * Math.cos(pitch) * Math.cos(yaw),
+  ];
+  const fwd = norm(scale(eye, -1));
+  const right = norm(cross(fwd, [0, 1, 0]));
+  const up = cross(right, fwd);
+  const c = Math.cos(roll);
+  const s = Math.sin(roll);
+  return { eye, fwd, right: add(scale(right, c), up, s), up: add(scale(up, c), right, -s) };
+}
+
+// Lightning between two points: a jagged line of nine points.
+function lightning(from, to) {
+  const span = length(add(to, from, -1));
+  const points = [];
+  for (let i = 0; i <= 8; i += 1) {
+    const k = i / 8;
+    const jitter = i === 0 || i === 8 ? 0 : span * 0.09;
+    const wobble = [Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5];
+    points.push(add(add(scale(from, 1 - k), to, k), wobble, jitter));
   }
-  return { ...best, length: run };
+  return points;
 }
-
-// Midpoint displacement: each pass splits every segment and pushes the new
-// point sideways by up to `amplitude` of the segment's length.
-function jagged(points, amplitude, depth) {
-  let line = points;
-  let amp = amplitude;
-  for (let level = 0; level < depth; level += 1) {
-    const next = [line[0]];
-    for (let i = 1; i < line.length; i += 1) {
-      const [ax, ay] = line[i - 1];
-      const [bx, by] = line[i];
-      const len = Math.hypot(bx - ax, by - ay) || 1e-6;
-      const off = (Math.random() - 0.5) * amp * len;
-      next.push([(ax + bx) / 2 - ((by - ay) / len) * off, (ay + by) / 2 + ((bx - ax) / len) * off], line[i]);
-    }
-    line = next;
-    amp *= 0.62;
-  }
-  return line;
-}
-
-function branchFrom(line, count, width) {
-  const branches = [];
-  for (let n = 0; n < count; n += 1) {
-    const k = 2 + Math.floor(Math.random() * (line.length - 4));
-    const [ax, ay] = line[k];
-    const [bx, by] = line[k + 1];
-    const heading = Math.atan2(by - ay, bx - ax) + (Math.random() < 0.5 ? -1 : 1) * (0.4 + Math.random() * 0.5);
-    const len = 0.12 + Math.random() * 0.25;
-    const end = [ax + Math.cos(heading) * len, ay + Math.sin(heading) * len];
-    branches.push({ points: jagged([[ax, ay], end], 0.45, 4), width });
-  }
-  return branches;
-}
-
-// A camera looking at the wall from DISTANCE, moved by (dx, dy).
-function camera(dx, dy) {
-  const eye = [dx, dy, DISTANCE];
-  const forward = norm([-0.6 * dx, -0.6 * dy, -DISTANCE]);
-  const right = norm(cross(forward, [0, 1, 0]));
-  return { eye, forward, right, up: cross(right, forward) };
-}
-
-const REST = camera(0, 0);
-
-// The camera drifts slowly, for a little parallax.
-const cameraAt = (t) => camera(Math.sin(t * 0.23) * 0.09, Math.sin(t * 0.17 + 1) * 0.05);
 
 // Lightning flickers: three quick flashes over a fading afterglow.
-const boltLight = (age) => {
-  if (age < 0 || age > 1.6) {
+const flicker = (age) => {
+  if (age < 0 || age > 0.9) {
     return 0;
   }
-  let v = 0.35 * Math.exp(-age / 0.4);
-  for (const flash of [0, 0.075, 0.2]) {
-    if (age >= flash) {
-      v += Math.exp(-(age - flash) / 0.045);
+  let v = 0.3 * Math.exp(-age / 0.25);
+  for (const at of [0, 0.06, 0.16]) {
+    if (age >= at) {
+      v += Math.exp(-(age - at) / 0.04);
     }
   }
   return v;
 };
 
 async function start() {
-  if (!(canvas && still)) {
+  if (!canvas) {
     return;
   }
   if (!navigator.gpu) {
@@ -582,10 +540,12 @@ async function start() {
   }
   const device = await adapter.requestDevice();
   let raf = 0;
+  const synth = createSynth(BPM);
   device.lost.then((info) => {
     if (info.reason !== 'destroyed') {
       cancelAnimationFrame(raf);
       raf = 0;
+      synth.stop();
       keepStill(`the GPU device was lost (${info.message})`);
     }
   });
@@ -597,189 +557,89 @@ async function start() {
   const format = navigator.gpu.getPreferredCanvasFormat();
   context.configure({ alphaMode: 'opaque', device, format });
 
-  const BUFFER = GPUBufferUsage;
-  const { FRAGMENT, VERTEX } = GPUShaderStage;
-  const f32 = new Float32Array(UNIFORM_FLOATS);
-  const uniforms = device.createBuffer({ size: f32.byteLength, usage: BUFFER.UNIFORM | BUFFER.COPY_DST });
-  const segments = device.createBuffer({ size: MAX_SEGMENTS * 32, usage: BUFFER.STORAGE | BUFFER.COPY_DST });
+  const small = matchMedia('(pointer: coarse)').matches || Math.min(innerWidth, innerHeight) < 700;
+  // The scene renders at a share of the canvas, which steps down if the GPU
+  // cannot keep up; the composite pass scales it up.
+  let renderScale = small ? 0.42 : 0.55;
+  const steps = small ? 80 : 110;
 
-  const drawLayout = device.createBindGroupLayout({
-    entries: [
-      { binding: 0, buffer: { type: 'uniform' }, visibility: VERTEX | FRAGMENT },
-      { binding: 1, buffer: { type: 'read-only-storage' }, visibility: VERTEX | FRAGMENT },
-    ],
-  });
-  const [tileModule, boltModule, blurModule, compositeModule] = await Promise.all([
-    compile(device, TILES, 'tiles'),
-    compile(device, BOLTS, 'bolts'),
+  const f32 = new Float32Array(UNIFORM_FLOATS);
+  const uniforms = device.createBuffer({ size: f32.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  const [sceneModule, blurModule, compositeModule] = await Promise.all([
+    compile(device, SCENE, 'scene'),
     compile(device, BLUR, 'bloom'),
     compile(device, COMPOSITE, 'composite'),
   ]);
   const HDR = 'rgba16float';
-  const DEPTH = 'depth24plus';
-  const additive = {
-    alpha: { dstFactor: 'one', operation: 'add', srcFactor: 'one' },
-    color: { dstFactor: 'one', operation: 'add', srcFactor: 'one' },
-  };
-  const drawPipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [drawLayout] });
-  const fullscreen = (module, entryPoint, targetFormat) =>
+  const pipeline = (module, entryPoint, targetFormat) =>
     device.createRenderPipelineAsync({
       fragment: { entryPoint, module, targets: [{ format: targetFormat }] },
       layout: 'auto',
       vertex: { entryPoint: 'vs', module },
     });
-  const [tilePipeline, boltPipeline, downPipeline, blurPipeline, compositePipeline] = await Promise.all([
-    device.createRenderPipelineAsync({
-      depthStencil: { depthCompare: 'less', depthWriteEnabled: true, format: DEPTH },
-      fragment: { entryPoint: 'fs', module: tileModule, targets: [{ format: HDR }] },
-      layout: drawPipelineLayout,
-      multisample: { count: SAMPLES },
-      vertex: { entryPoint: 'vs', module: tileModule },
-    }),
-    device.createRenderPipelineAsync({
-      depthStencil: { depthCompare: 'always', depthWriteEnabled: false, format: DEPTH },
-      fragment: { entryPoint: 'fs', module: boltModule, targets: [{ blend: additive, format: HDR }] },
-      layout: drawPipelineLayout,
-      multisample: { count: SAMPLES },
-      vertex: { entryPoint: 'vs', module: boltModule },
-    }),
-    fullscreen(blurModule, 'down', HDR),
-    fullscreen(blurModule, 'blur', HDR),
-    fullscreen(compositeModule, 'fs', format),
+  const [scenePipeline, downPipeline, blurPipeline, compositePipeline] = await Promise.all([
+    pipeline(sceneModule, 'march', HDR),
+    pipeline(blurModule, 'down', HDR),
+    pipeline(blurModule, 'blur', HDR),
+    pipeline(compositeModule, 'fs', format),
   ]);
-
-  const bind = (layout, buffers) =>
-    device.createBindGroup({ entries: buffers.map((buffer, binding) => ({ binding, resource: { buffer } })), layout });
-  const boltGroup = bind(drawLayout, [uniforms, segments]);
+  const sceneGroup = device.createBindGroup({
+    entries: [{ binding: 0, resource: { buffer: uniforms } }],
+    layout: scenePipeline.getBindGroupLayout(0),
+  });
   const sampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
   const passUniforms = [0, 1, 2].map(() =>
-    device.createBuffer({ size: 16, usage: BUFFER.UNIFORM | BUFFER.COPY_DST })
+    device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
   );
 
-  // Screen state: render size, the wall's tiles and bolt, and the render
-  // targets.
   let width = 0;
   let height = 0;
   let aspect = 1;
-  let wall = null;
-  let tiles = null;
   let textures = [];
   let views = null;
-
-  // Where the ray through a point on screen (in NDC) meets the wall, in the
-  // wall's own coordinates.
-  function toWall(cam, x, y) {
-    const dir = add(add(cam.forward, cam.right, (x * aspect) / FOCAL), cam.up, y / FOCAL);
-    const p = add(cam.eye, dir, -dot(cam.eye, WALL_N) / dot(dir, WALL_N));
-    return [dot(p, WALL_X), dot(p, WALL_Y)];
-  }
-
-  // Where a point on the wall is on screen, in NDC.
-  function toScreen(cam, [x, y]) {
-    const r = add(add(WALL_X.map((v) => v * x), WALL_Y, y), cam.eye, -1);
-    const z = dot(r, cam.forward);
-    return [(dot(r, cam.right) * FOCAL) / aspect / z, (dot(r, cam.up) * FOCAL) / z];
-  }
+  // Where the core sits on screen, in NDC: right of the copy on a wide
+  // screen, above it on a narrow one.
+  let coreAt = [0.42, 0.02];
 
   function layout() {
-    const cssWidth = canvas.clientWidth;
-    const cssHeight = canvas.clientHeight;
-    const dpr = Math.min(devicePixelRatio || 1, DPR_CAP, Math.sqrt(MAX_PIXELS / (cssWidth * cssHeight)));
-    width = Math.max(1, Math.round(cssWidth * dpr));
-    height = Math.max(1, Math.round(cssHeight * dpr));
-    aspect = cssWidth / cssHeight;
+    const dpr = Math.min(devicePixelRatio || 1, DPR_CAP);
+    width = Math.max(1, Math.round(canvas.clientWidth * dpr));
+    height = Math.max(1, Math.round(canvas.clientHeight * dpr));
+    aspect = canvas.clientWidth / canvas.clientHeight;
     canvas.width = width;
     canvas.height = height;
-
-    // The bolt goes where CSS lays out the still mark.
-    const box = still.getBoundingClientRect();
-    const fromIcon = ([x, y]) =>
-      toWall(
-        REST,
-        ((box.left + (x / 1024) * box.width) / cssWidth) * 2 - 1,
-        1 - ((box.top + (y / 1024) * box.height) / cssHeight) * 2
-      );
-    const path = SPLIT.map(fromIcon);
-    const crown = fromIcon([512, 0]);
-    const chin = fromIcon([512, 1024]);
-    const unit = Math.hypot(crown[0] - chin[0], crown[1] - chin[1]);
-    const center = fromIcon([512, 470]);
-    const corners = [
-      [-1.15, -1.15],
-      [1.15, -1.15],
-      [-1.15, 1.15],
-      [1.15, 1.15],
-    ].map(([x, y]) => toWall(REST, x, y));
-    const [minX, maxX] = [Math.min(...corners.map((c) => c[0])), Math.max(...corners.map((c) => c[0]))];
-    const [minY, maxY] = [Math.min(...corners.map((c) => c[1])), Math.max(...corners.map((c) => c[1]))];
-
-    // Tiles are a fiftieth of the head's height, from 9 to 18 CSS pixels.
-    const pxPerUnit = ((cssHeight / 2) * FOCAL) / DISTANCE;
-    const pitch = Math.max(
-      Math.min(Math.max(box.height / 50, 9), 18) / pxPerUnit,
-      Math.sqrt(((maxX - minX) * (maxY - minY)) / MAX_TILES)
-    );
-    // The bolt is three or so tiles wide, and tapers at its ends.
-    const boltHalf = Math.max(unit * 0.03, pitch * 1.2);
-    const [x0, y0] = [
-      center[0] + Math.floor((minX - center[0]) / pitch) * pitch,
-      center[1] + Math.floor((minY - center[1]) / pitch) * pitch,
-    ];
-    const cols = Math.ceil((maxX - x0) / pitch) + 1;
-    const rows = Math.ceil((maxY - y0) / pitch) + 1;
-    const data = new Float32Array(cols * rows * 8);
-    for (let row = 0; row < rows; row += 1) {
-      for (let col = 0; col < cols; col += 1) {
-        const p = [x0 + col * pitch, y0 + row * pitch];
-        const bolt = nearest(path, p);
-        const taper = 0.4 + 0.6 * smoothstep(0, bolt.length * 0.15, Math.min(bolt.s, bolt.length - bolt.s));
-        const [nx] = toScreen(REST, p);
-        data.set(
-          [...p, (nx + 1) / 2, bolt.d < boltHalf * taper ? 1 : 0, bolt.d / unit, bolt.s / bolt.length, Math.random(), 0],
-          (row * cols + col) * 8
-        );
-      }
-    }
-    tiles?.buffer.destroy();
-    const buffer = device.createBuffer({ size: data.byteLength, usage: BUFFER.STORAGE | BUFFER.COPY_DST });
-    device.queue.writeBuffer(buffer, 0, data);
-    tiles = { buffer, count: cols * rows, group: bind(drawLayout, [uniforms, buffer]) };
-    wall = { bottom: minY, center, half: pitch * 0.46, path, thick: pitch * 0.06, top: maxY, unit };
-
+    coreAt = innerWidth <= 760 ? [0, 0.42] : [0.42, 0.02];
     for (const texture of textures) {
       texture.destroy();
     }
     textures = [];
-    const target = (w, h, targetFormat, sampleCount) => {
+    const target = (w, h) => {
       const texture = device.createTexture({
-        format: targetFormat,
-        sampleCount,
-        size: [w, h],
-        usage: GPUTextureUsage.RENDER_ATTACHMENT | (sampleCount === 1 ? GPUTextureUsage.TEXTURE_BINDING : 0),
+        format: HDR,
+        size: [Math.max(1, w), Math.max(1, h)],
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
       });
       textures.push(texture);
       return texture.createView();
     };
-    const bw = Math.max(1, Math.floor(width / 4));
-    const bh = Math.max(1, Math.floor(height / 4));
-    const scene = target(width, height, HDR, 1);
-    const bloomA = target(bw, bh, HDR, 1);
-    const bloomB = target(bw, bh, HDR, 1);
-    // The bloom's tap step is a share of the head's size, so a phone's small
-    // head glows as tightly as a large one; it never widens past 1.6 texels,
-    // where the 9-tap blur would start to leave gaps.
-    const spread = Math.min(((box.height / cssHeight) * height) / 700, 1.6);
-    device.queue.writeBuffer(passUniforms[0], 0, new Float32Array([1 / width, 1 / height, 0, 0]));
-    device.queue.writeBuffer(passUniforms[1], 0, new Float32Array([0, 0, spread / bw, 0]));
-    device.queue.writeBuffer(passUniforms[2], 0, new Float32Array([0, 0, 0, spread / bh]));
-    const pass = (pipeline, view, uniform) =>
+    const sw = Math.max(1, Math.round(width * renderScale));
+    const sh = Math.max(1, Math.round(height * renderScale));
+    const bw = Math.max(1, Math.floor(sw / 4));
+    const bh = Math.max(1, Math.floor(sh / 4));
+    const scene = target(sw, sh);
+    const bloomA = target(bw, bh);
+    const bloomB = target(bw, bh);
+    device.queue.writeBuffer(passUniforms[0], 0, new Float32Array([1 / sw, 1 / sh, 0, 0]));
+    device.queue.writeBuffer(passUniforms[1], 0, new Float32Array([0, 0, 1.6 / bw, 0]));
+    device.queue.writeBuffer(passUniforms[2], 0, new Float32Array([0, 0, 0, 1.6 / bh]));
+    const pass = (pipe, view, uniform) =>
       device.createBindGroup({
         entries: [
           { binding: 0, resource: view },
           { binding: 1, resource: sampler },
           { binding: 2, resource: { buffer: uniform } },
         ],
-        layout: pipeline.getBindGroupLayout(0),
+        layout: pipe.getBindGroupLayout(0),
       });
     views = {
       bloomA,
@@ -788,159 +648,395 @@ async function start() {
       blurV: pass(blurPipeline, bloomB, passUniforms[2]),
       composite: device.createBindGroup({
         entries: [
-          { binding: 0, resource: scene },
-          { binding: 1, resource: bloomA },
-          { binding: 2, resource: sampler },
-          { binding: 3, resource: { buffer: uniforms } },
+          { binding: 0, resource: { buffer: uniforms } },
+          { binding: 1, resource: scene },
+          { binding: 2, resource: bloomA },
+          { binding: 3, resource: sampler },
         ],
         layout: compositePipeline.getBindGroupLayout(0),
       }),
-      depth: target(width, height, DEPTH, SAMPLES),
       down: pass(downPipeline, scene, passUniforms[0]),
-      msaa: target(width, height, HDR, SAMPLES),
       scene,
     };
   }
 
-  // The strike's lightning: from the sky, down the bolt, out under it.
-  let drawn = 0;
+  // Everything the visitor and the clock move.
+  const state = {
+    camera: { distance: 7, pitch: 0.12, pitchVel: 0, targetDistance: 7, yaw: 0.55, yawVel: 0 },
+    // The core's shape: it morphs from `from` to `to`, starting at `at`.
+    form: { at: -10, duration: BEAT, from: 0, to: 0 },
+    glitch: 0,
+    // The tendril pulled out of the core: its base, its springy tip, and the
+    // point the tip chases while it is held.
+    grab: { amount: 0, base: [0, 0, 0], depth: 0, held: false, target: [0, 0, 0], tip: [0, 0, 0], tipVel: [0, 0, 0] },
+    hover: [0, 0],
+    kickBoost: 0,
+    lastArea: -1,
+    lastBeat: -1,
+    lastFormBlock: 0,
+    pending: [],
+    strike: { at: -10, points: lightning([0, 0, 0], [0, 0, 1]) },
+    wave: -10,
+  };
+  const pointer = { inside: false, ndc: [0, 0] };
+  let dragging = null;
+  let camera = orbitCamera(state.camera.yaw, state.camera.pitch, state.camera.distance, 0);
+  let elapsed = 0;
 
-  function strike() {
-    const inside = wall.path;
-    const [tx, ty] = inside[0];
-    const up = [tx - inside[1][0], ty - inside[1][1]];
-    const sky = [tx + (up[0] / up[1]) * (wall.top - ty), wall.top];
-    const last = inside.at(-1);
-    const down = [last[0] - inside.at(-2)[0], last[1] - inside.at(-2)[1]];
-    const ground = [last[0] + (down[0] / -down[1]) * (last[1] - wall.bottom), wall.bottom];
-    const main = [
-      ...jagged([sky, inside[0]], 0.3, 5),
-      ...jagged(inside, 0.05, 3).slice(1),
-      ...jagged([last, ground], 0.3, 5).slice(1),
-    ];
-    const lines = [
-      { points: main, width: 0.0032 },
-      ...branchFrom(main.slice(0, 33), 2, 0.0018),
-      ...branchFrom(main.slice(-33), 2, 0.0018),
-    ];
-    const data = new Float32Array(MAX_SEGMENTS * 8);
-    drawn = 0;
-    for (const { points, width: w } of lines) {
-      for (let i = 1; i < points.length && drawn < MAX_SEGMENTS; i += 1) {
-        data.set([...points[i - 1], ...points[i], w, 14], drawn * 8);
-        drawn += 1;
-      }
+  const ndcOf = (clientX, clientY) => [(clientX / innerWidth) * 2 - 1, 1 - (clientY / innerHeight) * 2];
+  const rayThrough = ([x, y]) =>
+    norm(add(add(scale(camera.fwd, FOCAL), camera.right, (x - coreAt[0]) * aspect), camera.up, y - coreAt[1]));
+  // How far along a ray from the eye it meets the core's bounding sphere, or
+  // null if it misses.
+  const hitCore = (dir) => {
+    const b = dot(camera.eye, dir);
+    const disc = b * b - (dot(camera.eye, camera.eye) - 1.25 * 1.25);
+    return disc < 0 ? null : -b - Math.sqrt(disc);
+  };
+
+  function morphTo(next, t, duration) {
+    const f = state.form;
+    if (t - f.at < f.duration) {
+      return;
     }
-    device.queue.writeBuffer(segments, 0, data, 0, drawn * 8);
+    state.form = { at: t, duration, from: f.to, to: next % FORMS };
   }
 
-  const pointer = { amount: 0, at: -10, inside: false, wall: null, x: 0, y: 0 };
+  // A click away from the core strikes lightning toward it on the next
+  // sixteenth note.
+  function queueStrike(dir, t) {
+    const sixteenth = BEAT / 4;
+    const at = Math.ceil(t / sixteenth + 0.001) * sixteenth;
+    state.pending.push({ at, dir });
+    synth.strike(at);
+  }
 
-  function writeUniforms(t, c, light, cam) {
-    f32.set(cam.eye, 0);
-    f32[3] = aspect;
-    f32.set(cam.right, 4);
-    f32[7] = FOCAL;
-    f32.set(cam.up, 8);
-    f32[11] = c;
-    f32.set(cam.forward, 12);
-    f32[15] = t;
-    f32.set(WALL_X, 16);
-    f32[19] = wall.unit;
-    f32.set(WALL_Y, 20);
-    f32[23] = wall.half;
-    f32.set(WALL_N, 24);
-    f32[27] = wall.thick;
-    f32.set(pointer.wall ?? [0, 0], 28);
-    f32[30] = pointer.amount;
-    f32[31] = light;
-    f32.set(wall.center, 32);
+  function fire(strike, t) {
+    const far = add(camera.eye, strike.dir, 16);
+    state.strike = { at: t, points: lightning(scale(norm(far), 1.15), far) };
+    state.wave = t;
+    state.glitch = Math.max(state.glitch, 0.55);
+    state.kickBoost = 1;
+  }
+
+  function writeUniforms(t) {
+    const beat = t / BEAT;
+    const area = Math.floor(beat / AREA_BEATS);
+    const inArea = beat - area * AREA_BEATS;
+    const toNext = smoothstep(AREA_BEATS - 2, AREA_BEATS, inArea);
+    const colors = AREAS[area % AREAS.length].colors.map((c, i) =>
+      mixColor(c, AREAS[(area + 1) % AREAS.length].colors[i], toNext)
+    );
+    const kick = Math.max(Math.exp(-(beat % 1) * 6) * (beat % 4 < 1 ? 1 : 0.7), state.kickBoost);
+    const f = state.form;
+    const morph = smoothstep(0, 1, clamp((t - f.at) / f.duration, 0, 1));
+    const waveAge = t - state.wave;
+    f32.set([width, height, t, beat], 0);
+    f32.set([...camera.eye, kick], 4);
+    f32.set([...camera.right, FOCAL], 8);
+    f32.set([...camera.up, state.glitch], 12);
+    f32.set([...camera.fwd, t * 7.5], 16);
+    f32.set([-coreAt[0] * aspect, -coreAt[1], morph, f.from], 20);
+    f32.set([f.to, waveAge < 1.6 ? waveAge * 13 : -1, flicker(t - state.strike.at), Math.sin(Math.PI * morph)], 24);
+    f32.set([...state.grab.base, state.grab.amount], 28);
+    f32.set([...state.grab.tip, steps], 32);
+    f32.set([...colors[0], 0, ...colors[1], 0, ...colors[2], 0], 36);
+    // A flash of the new area's first color as the scene moves on.
+    f32.set([...colors[0], Math.max(0, 1 - Math.abs(inArea - 0.15) * 3) * (area > 0 ? 0.08 : 0)], 48);
+    state.strike.points.forEach((p, i) => f32.set([...p, 0], 52 + i * 4));
     device.queue.writeBuffer(uniforms, 0, f32);
+    return area;
   }
 
-  function encode(lightning) {
+  function encode() {
     const encoder = device.createCommandEncoder();
-    const scenePass = encoder.beginRenderPass({
-      colorAttachments: [
-        { clearValue: [0, 0, 0, 1], loadOp: 'clear', resolveTarget: views.scene, storeOp: 'discard', view: views.msaa },
-      ],
-      depthStencilAttachment: { depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'discard', view: views.depth },
-    });
-    scenePass.setPipeline(tilePipeline);
-    scenePass.setBindGroup(0, tiles.group);
-    scenePass.draw(36, tiles.count);
-    if (lightning) {
-      scenePass.setPipeline(boltPipeline);
-      scenePass.setBindGroup(0, boltGroup);
-      scenePass.draw(6, drawn);
-    }
-    scenePass.end();
-    const post = (pipeline, group, view) => {
-      const pass = encoder.beginRenderPass({
-        colorAttachments: [{ loadOp: 'clear', storeOp: 'store', view }],
-      });
-      pass.setPipeline(pipeline);
+    const draw = (pipe, group, view) => {
+      const pass = encoder.beginRenderPass({ colorAttachments: [{ loadOp: 'clear', storeOp: 'store', view }] });
+      pass.setPipeline(pipe);
       pass.setBindGroup(0, group);
       pass.draw(3);
       pass.end();
     };
-    post(downPipeline, views.down, views.bloomA);
-    post(blurPipeline, views.blurH, views.bloomB);
-    post(blurPipeline, views.blurV, views.bloomA);
-    post(compositePipeline, views.composite, context.getCurrentTexture().createView());
+    draw(scenePipeline, sceneGroup, views.scene);
+    draw(downPipeline, views.down, views.bloomA);
+    draw(blurPipeline, views.blurH, views.bloomB);
+    draw(blurPipeline, views.blurV, views.bloomA);
+    draw(compositePipeline, views.composite, context.getCurrentTexture().createView());
     device.queue.submit([encoder.finish()]);
   }
 
-  // One frame for reduced motion: the bolt written on the wall after its
-  // strike, still glowing.
-  function drawStill() {
-    writeUniforms(START, STRIKE_AT + 2, 0, REST);
-    encode(false);
+  // The page's readouts: the area, the bar and beat, and a pulse on the beat.
+  const hud = {
+    area: document.querySelector('[data-area]'),
+    count: document.querySelector('[data-count]'),
+    pulse: document.querySelector('[data-pulse]'),
+    reticle: document.querySelector('.reticle'),
+  };
+
+  function updateHud(area, beat) {
+    const whole = Math.floor(beat);
+    if (whole === state.lastBeat) {
+      return;
+    }
+    state.lastBeat = whole;
+    if (hud.count) {
+      hud.count.textContent = `${String(Math.floor(whole / 4) % 100).padStart(2, '0')}.${(whole % 4) + 1}`;
+    }
+    if (hud.area && area !== state.lastArea) {
+      state.lastArea = area;
+      hud.area.textContent = `Area ${String((area % AREAS.length) + 1).padStart(2, '0')} · ${AREAS[area % AREAS.length].name}`;
+    }
+    for (const el of [hud.pulse, hud.reticle]) {
+      el?.animate([{ scale: 1.5 }, { scale: 1 }], { duration: BEAT * 700, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
+    }
   }
 
-  let elapsed = 0;
+  function step(dt) {
+    elapsed += dt;
+    const t = elapsed;
+    const beat = t / BEAT;
+    const cam = state.camera;
+
+    // The clock's own moves: a new shape every four bars, with a glitch, and
+    // a push in and a roll as each area begins.
+    const block = Math.floor(beat / FORM_BEATS);
+    if (block !== state.lastFormBlock) {
+      state.lastFormBlock = block;
+      morphTo(state.form.to + 1, t, BEAT);
+      state.glitch = Math.max(state.glitch, block % 2 === 0 ? 0.9 : 0.35);
+    }
+    const punch = beat > AREA_BEATS ? Math.exp(-(beat % AREA_BEATS) * 1.2) : 0;
+
+    for (const strike of state.pending.filter((s) => s.at <= t)) {
+      fire(strike, t);
+    }
+    state.pending = state.pending.filter((s) => s.at > t);
+
+    // Orbit: the drag's momentum, a slow drift and a lean toward the pointer.
+    if (!dragging) {
+      cam.yaw += cam.yawVel * dt;
+      cam.pitch += cam.pitchVel * dt;
+      cam.yawVel *= Math.exp(-dt * 2.5);
+      cam.pitchVel *= Math.exp(-dt * 2.5);
+    }
+    cam.yaw += dt * 0.06;
+    cam.pitch = clamp(cam.pitch + (0.12 - cam.pitch) * dt * 0.2, -1.2, 1.2);
+    cam.distance += (cam.targetDistance - cam.distance) * (1 - Math.exp(-dt * 6));
+    state.hover = state.hover.map((v, i) => v + ((pointer.inside ? pointer.ndc[i] : 0) - v) * (1 - Math.exp(-dt * 3)));
+    camera = orbitCamera(
+      cam.yaw + state.hover[0] * 0.18,
+      clamp(cam.pitch - state.hover[1] * 0.12, -1.25, 1.25),
+      cam.distance * (1 - 0.28 * punch),
+      Math.sin(t * 0.13) * 0.06 + punch * 0.4
+    );
+
+    // The tendril's tip is a spring: it chases the pointer while held and
+    // wobbles home when let go.
+    const g = state.grab;
+    if (g.held) {
+      g.target = add(camera.eye, rayThrough(pointer.ndc), g.depth);
+      const reach = add(g.target, g.base, -1);
+      if (length(reach) > 3.2) {
+        g.target = add(g.base, norm(reach), 3.2);
+      }
+    }
+    g.tipVel = add(scale(g.tipVel, Math.exp(-dt * 9)), add(g.target, g.tip, -1), 140 * dt);
+    g.tip = add(g.tip, g.tipVel, dt);
+    const home = length(add(g.tip, g.base, -1)) < 0.08 && length(g.tipVel) < 0.3;
+    g.amount += ((g.held || !home ? 1 : 0) - g.amount) * (1 - Math.exp(-dt * (g.held ? 14 : 5)));
+
+    state.glitch *= Math.exp(-dt * 4.5);
+    state.kickBoost *= Math.exp(-dt * 6);
+    const area = writeUniforms(t);
+    updateHud(area, beat);
+    synth.update(t, area);
+  }
+
   let last = 0;
-  let struck = -1;
+  const slowFrames = [];
+  let downgrades = 0;
 
   function frame(now) {
-    const dt = Math.min((now - last) / 1000, 1 / 30);
+    const dt = Math.min((now - last) / 1000, 0.1);
     last = now;
-    elapsed += dt;
-    const t = START + elapsed;
-    const c = t % CYCLE;
-    if (c >= STRIKE_AT && struck !== Math.floor(t / CYCLE)) {
-      struck = Math.floor(t / CYCLE);
-      strike();
+    step(dt);
+    encode();
+    // The scene's resolution steps down at most three times if the GPU
+    // cannot keep up.
+    slowFrames.push(dt);
+    if (slowFrames.length === 90) {
+      slowFrames.sort((a, b) => a - b);
+      if (slowFrames[45] > 1 / 45 && downgrades < 3) {
+        renderScale *= 0.8;
+        downgrades += 1;
+        layout();
+      }
+      slowFrames.length = 0;
     }
-    const light = c >= STRIKE_AT ? boltLight(c - STRIKE_AT) : 0;
-    const cam = cameraAt(t);
-    // The pointer's pull eases in as it moves and out a second after it stops.
-    const idle = (performance.now() - pointer.at) / 1000;
-    const pull = pointer.inside ? 1 - smoothstep(1.2, 2, idle) : 0;
-    pointer.amount += (pull - pointer.amount) * (1 - Math.exp(-dt * 6));
-    const aim = toWall(cam, (pointer.x / innerWidth) * 2 - 1, 1 - (pointer.y / innerHeight) * 2);
-    pointer.wall = pointer.wall ? pointer.wall.map((v, k) => v + (aim[k] - v) * (1 - Math.exp(-dt * 10))) : aim;
-    writeUniforms(t, c, light, cam);
-    encode(light > 0.002);
     raf = requestAnimationFrame(frame);
+  }
+
+  // One frame for reduced motion: a moment just after a strike, held.
+  function drawStill() {
+    elapsed = AREA_BEATS * BEAT * 0.5;
+    state.strike = { at: elapsed - 0.12, points: lightning([0.9, 0.5, 0.5], [9, 4, -6]) };
+    writeUniforms(elapsed);
+    encode();
   }
 
   function run() {
     cancelAnimationFrame(raf);
     raf = 0;
     if (reducedMotion.matches) {
+      synth.stop();
       drawStill();
-    } else if (!document.hidden) {
+    } else if (document.hidden) {
+      synth.pause();
+    } else {
+      synth.resume();
       last = performance.now();
       raf = requestAnimationFrame(frame);
     }
   }
 
+  // Input. The page's own controls and text keep their pointer.
+  const pinch = new Map();
+  const isUi = (target) =>
+    target instanceof Element && Boolean(target.closest('a, button, dialog, .hero, .notes-card, .top, .foot'));
+  const live = () => !reducedMotion.matches && root.dataset.backdrop === 'live';
+
+  addEventListener('pointermove', (event) => {
+    pointer.ndc = ndcOf(event.clientX, event.clientY);
+    pointer.inside = true;
+    if (hud.reticle) {
+      hud.reticle.style.translate = `${event.clientX}px ${event.clientY}px`;
+      const aim = live() && !isUi(event.target) && event.pointerType !== 'touch';
+      root.dataset.aim = aim ? (hitCore(rayThrough(pointer.ndc)) === null ? 'on' : 'core') : '';
+    }
+    if (pinch.has(event.pointerId) && pinch.size === 2) {
+      const [a, b] = [...pinch.values()];
+      const before = Math.hypot(a.x - b.x, a.y - b.y);
+      pinch.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      const [c, d] = [...pinch.values()];
+      const after = Math.hypot(c.x - d.x, c.y - d.y);
+      state.camera.targetDistance = clamp(state.camera.targetDistance * (before / Math.max(after, 1)), 3.2, 12);
+      return;
+    }
+    if (!dragging || dragging.id !== event.pointerId) {
+      return;
+    }
+    const dx = event.clientX - dragging.x;
+    const dy = event.clientY - dragging.y;
+    const ms = Math.max(event.timeStamp - dragging.time, 8);
+    dragging.moved += Math.abs(dx) + Math.abs(dy);
+    dragging.x = event.clientX;
+    dragging.y = event.clientY;
+    dragging.time = event.timeStamp;
+    if (dragging.mode === 'orbit') {
+      const cam = state.camera;
+      cam.yaw -= dx * 0.006;
+      cam.pitch = clamp(cam.pitch + dy * 0.005, -1.2, 1.2);
+      cam.yawVel = ((-dx * 0.006) / ms) * 500;
+      cam.pitchVel = ((dy * 0.005) / ms) * 500;
+    }
+  });
+  addEventListener('pointerdown', (event) => {
+    if (!live() || isUi(event.target) || event.button !== 0) {
+      return;
+    }
+    pinch.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (pinch.size > 1) {
+      dragging = null;
+      state.grab.held = false;
+      state.grab.target = state.grab.base;
+      return;
+    }
+    pointer.ndc = ndcOf(event.clientX, event.clientY);
+    const dir = rayThrough(pointer.ndc);
+    const depth = hitCore(dir);
+    dragging = {
+      id: event.pointerId,
+      mode: depth === null ? 'orbit' : 'grab',
+      moved: 0,
+      time: event.timeStamp,
+      x: event.clientX,
+      y: event.clientY,
+    };
+    root.dataset.dragging = '';
+    if (depth !== null) {
+      const g = state.grab;
+      const surface = add(camera.eye, dir, depth);
+      g.base = scale(surface, 0.8);
+      g.depth = depth;
+      g.held = true;
+      if (g.amount < 0.05) {
+        g.tip = surface;
+        g.tipVel = [0, 0, 0];
+      }
+      g.target = surface;
+    }
+  });
+  const release = (event) => {
+    pinch.delete(event.pointerId);
+    if (!dragging || dragging.id !== event.pointerId) {
+      return;
+    }
+    const t = elapsed;
+    if (dragging.moved < 6) {
+      // A click: on the core it changes shape, anywhere else lightning strikes.
+      if (dragging.mode === 'grab') {
+        morphTo(state.form.to + 1, t, 0.35);
+        state.glitch = Math.max(state.glitch, 0.6);
+        state.kickBoost = 1;
+        synth.morph(t);
+      } else {
+        queueStrike(rayThrough(ndcOf(event.clientX, event.clientY)), t);
+      }
+    }
+    if (dragging.mode === 'grab') {
+      state.grab.held = false;
+      state.grab.target = state.grab.base;
+      if (dragging.moved >= 6) {
+        synth.snap(t);
+      }
+    }
+    dragging = null;
+    delete root.dataset.dragging;
+  };
+  addEventListener('pointerup', release);
+  addEventListener('pointercancel', release);
+  addEventListener(
+    'wheel',
+    (event) => {
+      if (!live() || (event.target instanceof Element && event.target.closest('dialog'))) {
+        return;
+      }
+      state.camera.targetDistance = clamp(state.camera.targetDistance * Math.exp(event.deltaY * 0.0012), 3.2, 12);
+    },
+    { passive: true }
+  );
+  root.addEventListener('pointerleave', () => {
+    pointer.inside = false;
+    root.dataset.aim = '';
+  });
+
+  // The sound switch: off until the visitor turns it on.
+  const sound = document.querySelector('[data-sound]');
+  sound?.addEventListener('click', async () => {
+    const on = await synth.toggle(elapsed);
+    sound.setAttribute('aria-pressed', String(on));
+    sound.querySelector('[data-sound-label]').textContent = on ? 'Sound on' : 'Sound off';
+  });
+
   layout();
+  writeUniforms(0);
   run();
   device.queue.onSubmittedWorkDone().then(() => {
     if (root.dataset.backdrop !== 'still') {
       root.dataset.backdrop = 'live';
+      if (sound && !reducedMotion.matches) {
+        sound.hidden = false;
+      }
     }
   });
 
@@ -952,15 +1048,6 @@ async function start() {
   }).observe(canvas);
   document.addEventListener('visibilitychange', run);
   reducedMotion.addEventListener('change', run);
-  addEventListener('pointermove', (event) => {
-    pointer.x = event.clientX;
-    pointer.y = event.clientY;
-    pointer.at = performance.now();
-    pointer.inside = true;
-  });
-  document.documentElement.addEventListener('pointerleave', () => {
-    pointer.inside = false;
-  });
 }
 
 start().catch((error) => {
