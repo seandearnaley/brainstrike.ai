@@ -1,7 +1,7 @@
 # brainstrike.ai
 
-The landing page for the Brainstrike desktop app: one screen with a playable
-WebGL2 backdrop, the download for the visitor's platform and the release
+The landing page for the Brainstrike desktop app: one screen with a live
+WebGL2 agent, the download for the visitor's platform and the release
 notes. Static files, no framework and no dependencies.
 
 `npm run build` (Node 24) runs `build.mjs`, which writes `dist/`: the page,
@@ -33,27 +33,25 @@ hook for `main` as the Actions secret `VERCEL_SITE_DEPLOY_HOOK` for that.
   and says Brainstrike is a desktop app.
 - **Read the release notes** opens a dialog with the notes and every
   download's SHA-256 checksum.
-- `public/backdrop.js` draws the backdrop, the 1990s pipe screensaver
-  rebuilt with WebGL2: chrome, enamel and pearl pipes grow one cell a beat
-  over an endless checkerboard floor under a link-blue sky, with two Mystify
-  ribbons behind them; bands of colour drift across the floor, and every four
-  bars a ring of light rolls out over it. The music's two 16-bar sections, Daylight and Night
-  mall, change the sky; at each change the pipes dissolve, dithered down to
-  the web-safe palette, and new ones start. Drag to orbit, scroll or pinch to
-  zoom, click empty space to start a pipe (and a ring of light), click a pipe
-  to ring it, pull a pipe to bend it. The header's little CD player shows the track and time.
-- `public/synth.js` is its music, 90s internet dreamwave at 100 BPM: a Web
-  Audio synth on the scene's clock, off until the visitor presses play. Every
-  turn a pipe takes plays a note of the chord.
-- A lost GL context (sleep and wake, a GPU switch, a backgrounded phone tab)
-  is rebuilt when the browser restores it. Without WebGL2 the page keeps its
-  CSS sky and says why in `html[data-backdrop-reason]`; reduced motion draws
-  one frame and takes no input.
+- `public/backdrop.js` is the live layer: the page is an agent that knows the
+  visitor is there. A small chartreuse drop lives as the dot on the second
+  "i" of the wordmark; it hops off, follows the cursor, visits whatever is
+  hovered (elements marked `data-agent`), can be booped, picked up and
+  thrown, and naps on its "i" after 15 idle seconds. It shows its work in a
+  short log: the visitor's platform and the build it picked, the time of day,
+  return visits (counted in this browser's `localStorage` only), tab
+  switches and the like. Behind it a fine dot field leans toward it and
+  lights up when it thinks.
+- `public/synth.js` is the music, 90s internet dreamwave at 100 BPM: a Web
+  Audio synth, off until the visitor presses play.
+- A lost GL context is rebuilt when the browser restores it. Without WebGL2
+  the wordmark keeps its plain dot and the page says why in
+  `html[data-backdrop-reason]`; reduced motion keeps the agent on its "i" and
+  writes the log at once.
 - The colours, favicon and social card come from the Brainstrike identity
   pack: ultramarine `#000CDE`, close to the web's original link blue, and
-  chartreuse `#D0FB07`. The wordmark is set in Syne; the fonts (Syne, Geist,
-  Geist Mono and Silkscreen, all OFL)
-  are served from `public/fonts/`, so no outside stylesheet holds up the page.
+  chartreuse `#D0FB07`. The type is Instrument Sans with Geist Mono for the
+  log, both OFL and served from `public/fonts/`.
 
 ## Environment
 
