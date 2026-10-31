@@ -53,6 +53,16 @@ const ARCHITECTURE_LABELS = {
   windows: { arm64: 'arm64', universal: 'Universal', x64: 'x64' },
 };
 const PACKAGE_LABELS = { appimage: 'AppImage', dmg: 'DMG', nsis: 'installer' };
+// What a build needs, shown under the big button for the visitor's platform.
+// macOS 12: Electron 38 and later need it, and the app ships Electron 45.
+// Windows: the agent's commands run outside any sandbox there and no Python
+// is bundled (docs/agents/code-execution.md in the brainstrike monorepo).
+const PLATFORM_NOTES = {
+  linux: 'Make the AppImage executable (chmod +x), then run it.',
+  macos: 'Needs macOS 12 or later.',
+  windows:
+    'Needs Windows 10 or 11. Not code-signed yet, so SmartScreen warns first. On Windows, agent commands run without a sandbox, and Python is not included.',
+};
 
 function fail(message) {
   throw new Error(message);
@@ -291,6 +301,7 @@ function downloads(manifest) {
         architecture: asset.architecture,
         digest: DIGEST.exec(asset.digest)[1],
         key: `${id}-${asset.architecture}-${asset.package}`,
+        note: PLATFORM_NOTES[id],
         os: label,
         package: PACKAGE_LABELS[asset.package],
         platform: id,
@@ -340,7 +351,7 @@ ${rows}
 <a class="primary" href="${escapeHtml(primary.url)}" data-primary data-agent="download">${downloadIcon}<span><span class="primary-title" data-title>Download for ${primary.os}</span><span class="primary-meta" data-meta>${escapeHtml(primary.arch)} · ${primary.package} · ${primary.size}</span></span></a>
 <p class="elsewhere">For macOS, Windows and Linux.</p>
 <div class="also">${chips}</div>
-<p class="caveat" data-caveat hidden>Not code-signed yet, so SmartScreen warns first.</p>
+<p class="caveat" data-caveat>${escapeHtml(primary.note)}</p>
 </div>
 <script type="application/json" id="builds">${buildsJson}</script>
 <script>${DETECT_SCRIPT}</script>`,
@@ -362,7 +373,7 @@ const DETECT_SCRIPT = `(() => {
     primary.querySelector('[data-title]').textContent = 'Download for ' + build.os;
     primary.querySelector('[data-meta]').textContent = build.arch + ' · ' + build.package + ' · ' + build.size;
     for (const chip of chips) chip.hidden = chip.dataset.build === build.key;
-    caveat.hidden = build.platform !== 'windows';
+    caveat.textContent = build.note;
   };
   const hints = navigator.userAgentData;
   const ua = navigator.userAgent;
@@ -370,6 +381,7 @@ const DETECT_SCRIPT = `(() => {
   if ((hints && hints.mobile) || /android|iphone|ipad|ipod/i.test(ua) || (/mac/.test(platform) && navigator.maxTouchPoints > 1)) {
     document.documentElement.dataset.get = 'elsewhere';
     for (const chip of chips) chip.hidden = false;
+    caveat.hidden = true;
     return;
   }
   const os = /win/.test(platform) ? 'windows' : /mac/.test(platform) ? 'macos' : /linux|x11|cros/.test(platform) || /linux/i.test(ua) ? 'linux' : null;
@@ -681,6 +693,8 @@ function renderPage(manifest, notes) {
 <meta name="theme-color" content="#000cde">
 <meta property="og:title" content="Brainstrike">
 <meta property="og:description" content="Agents that show their work. A desktop app for macOS, Windows and Linux.">
+<meta property="og:url" content="${SITE_URL}/">
+<meta property="og:type" content="website">
 <meta property="og:image" content="${SITE_URL}/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
