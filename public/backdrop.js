@@ -16,7 +16,7 @@
 
 import { createSynth } from './synth.js';
 
-const BPM = 100;
+const BPM = 90;
 const BEAT = 60 / BPM;
 const AGENT_SIZE = 240; // the agent's own canvas, in CSS pixels
 const AWAKE_RADIUS = 22;
@@ -431,7 +431,10 @@ function start() {
     Object.assign(pulses[nextPulse], { age: 0, strength, x: agent.pos[0], y: agent.pos[1] });
     nextPulse = (nextPulse + 1) % pulses.length;
   }
-  const log = createLog(() => pulseFromAgent(0.9));
+  const log = createLog(() => {
+    pulseFromAgent(0.9);
+    synth.say(elapsed);
+  });
 
   // The agent's seat: the dot of the second "i".
   function home() {
@@ -486,6 +489,7 @@ function start() {
     // Nobody has moved for a while: back to the "i" for a nap.
     if (['follow', 'visit'].includes(agent.state) && t - pointer.lastMove > NAP_AFTER) {
       agent.state = 'nap';
+      synth.nap(true);
       setMood('asleep');
       log.say(`idle ${NAP_AFTER}s → napping on my i.`, { key: 'nap' });
     }
@@ -702,6 +706,8 @@ function start() {
     pointer.lastMove = elapsed;
     if (agent.state === 'nap') {
       agent.state = 'follow';
+      synth.nap(false);
+      synth.spawn(elapsed);
       agent.vel = [0, -380];
       setMood('surprised', 0.6);
       log.say('oh! hi.', { key: 'wake' });
@@ -844,7 +850,7 @@ function start() {
     if (label) {
       label.textContent = synthOn ? 'Pause the music' : 'Play the music';
     }
-    log.say(synthOn ? 'music on · 100 BPM · I’ll dance.' : 'quiet. okay.', { key: 'music', now: true });
+    log.say(synthOn ? `music on · ${BPM} BPM · I’ll hum along.` : 'quiet. okay.', { key: 'music', now: true });
   });
 
   // What it says when it arrives.

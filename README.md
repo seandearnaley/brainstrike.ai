@@ -42,8 +42,10 @@ hook for `main` as the Actions secret `VERCEL_SITE_DEPLOY_HOOK` for that.
   return visits (counted in this browser's `localStorage` only), tab
   switches and the like. Behind it a fine dot field leans toward it and
   lights up when it thinks.
-- `public/synth.js` is the music, 90s internet dreamwave at 100 BPM: a Web
-  Audio synth, off until the visitor presses play.
+- `public/synth.js` is the music, soft machine pop at 90 BPM: a Web
+  Audio synth, off until the visitor presses play. The agent plays along: a
+  chirp for each thought, a felt note for a boop, and the band drops to the
+  pad while it naps.
 - A lost GL context is rebuilt when the browser restores it. Without WebGL2
   the wordmark keeps its plain dot and the page says why in
   `html[data-backdrop-reason]`; reduced motion keeps the agent on its "i" and
