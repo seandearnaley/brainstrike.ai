@@ -225,16 +225,6 @@ function sanitizeNotes(html) {
     .trim();
 }
 
-// The first list items of the notes, or their first paragraphs, as text.
-function noteExcerpt(notes, limit) {
-  const items = [...notes.matchAll(/<li>([\s\S]*?)<\/li>/gu)];
-  const blocks = items.length > 0 ? items : [...notes.matchAll(/<p>([\s\S]*?)<\/p>/gu)];
-  return blocks
-    .map(([, inner]) => inner.replace(/<[^>]+>/gu, '').trim())
-    .filter(Boolean)
-    .slice(0, limit);
-}
-
 // Returns the newest published manifest and that release's notes, or a null
 // manifest when no release carries one.
 async function loadPublishedRelease() {
@@ -319,10 +309,9 @@ function renderRelease(manifest, notes) {
   const chips = builds
     .map(
       (build) =>
-        `<a class="chip" href="${escapeHtml(build.url)}" data-build="${build.key}"${build === primary ? ' hidden' : ''}>${build.os}<span>${escapeHtml(build.arch)}</span></a>`
+        `<a class="chip" href="${escapeHtml(build.url)}" data-build="${build.key}" data-agent="chip"${build === primary ? ' hidden' : ''}>${build.os}<span>${escapeHtml(build.arch)}</span></a>`
     )
     .join('');
-  const excerpt = notes ? noteExcerpt(notes, 3) : [];
   const date = formatDate(publishedAt);
   const rows = builds
     .map(
@@ -331,11 +320,7 @@ function renderRelease(manifest, notes) {
     .join('\n');
   const buildsJson = JSON.stringify(builds).replaceAll('<', '\\u003c');
   return {
-    card: `<aside class="notes-card" aria-labelledby="notes-card-title">
-<div class="notes-head"><h2 id="notes-card-title">What’s new</h2><span class="mono">${escapeHtml(version)} · ${date}</span></div>
-${excerpt.length > 0 ? `<ul class="excerpt">${excerpt.map((line) => `<li>${line}</li>`).join('')}</ul>` : ''}
-<button type="button" class="more" commandfor="notes" command="show-modal">Read the release notes <span aria-hidden="true">→</span></button>
-</aside>`,
+    card: `<button type="button" class="notes-pill" commandfor="notes" command="show-modal" data-agent="notes"><i aria-hidden="true"></i>What’s new in ${escapeHtml(version)}<span aria-hidden="true">→</span></button>`,
     dialog: `<dialog id="notes" closedby="any" aria-labelledby="notes-title">
 <div class="dialog-head">
 <div><p class="mono">Release notes · ${date}</p><h2 id="notes-title">Brainstrike ${escapeHtml(version)}</h2></div>
@@ -350,13 +335,12 @@ ${rows}
 <p class="sums-links"><a href="${escapeHtml(sums)}">SHA256SUMS</a><a href="${escapeHtml(releasePage)}">Release on GitHub</a></p>
 </div>
 </dialog>`,
-    eyebrow: `Desktop agent workspace · v${escapeHtml(version)}`,
-    footer: `<footer class="foot"><span>v${escapeHtml(version)} · ${date}</span><span>macOS builds signed and notarized</span><a href="${escapeHtml(sums)}">SHA256SUMS</a></footer>`,
+    footer: `<footer class="foot"><span>Signed and notarized for macOS</span><a href="${escapeHtml(sums)}">SHA256SUMS</a><a href="${ISSUES_URL}">Report a bug</a></footer>`,
     get: `<div class="get">
-<a class="primary" href="${escapeHtml(primary.url)}" data-primary>${downloadIcon}<span><span class="primary-title" data-title>Download for ${primary.os}</span><span class="primary-meta" data-meta>${escapeHtml(primary.arch)} · ${primary.package} · ${primary.size}</span></span></a>
-<p class="elsewhere">Brainstrike is a desktop app for macOS, Windows and Linux.</p>
-<div class="also"><span class="also-label">Also for</span>${chips}</div>
-<p class="caveat" data-caveat hidden>The Windows installer is not code-signed yet, so SmartScreen will warn before it runs.</p>
+<a class="primary" href="${escapeHtml(primary.url)}" data-primary data-agent="download">${downloadIcon}<span><span class="primary-title" data-title>Download for ${primary.os}</span><span class="primary-meta" data-meta>${escapeHtml(primary.arch)} · ${primary.package} · ${primary.size}</span></span></a>
+<p class="elsewhere">For macOS, Windows and Linux.</p>
+<div class="also">${chips}</div>
+<p class="caveat" data-caveat hidden>Not code-signed yet, so SmartScreen warns first.</p>
 </div>
 <script type="application/json" id="builds">${buildsJson}</script>
 <script>${DETECT_SCRIPT}</script>`,
@@ -425,26 +409,24 @@ const DIALOG_SCRIPT = `(() => {
 })();`;
 
 const STYLES = `
-@font-face { font-family: 'Geist'; src: url('/fonts/geist.woff2') format('woff2'); font-weight: 400 700; font-display: swap; }
+@font-face { font-family: 'Instrument Sans'; src: url('/fonts/instrument-sans.woff2') format('woff2'); font-weight: 400 700; font-stretch: 75% 100%; font-display: swap; }
 @font-face { font-family: 'Geist Mono'; src: url('/fonts/geist-mono.woff2') format('woff2'); font-weight: 400 500; font-display: swap; }
-@font-face { font-family: 'Silkscreen'; src: url('/fonts/silkscreen.woff2') format('woff2'); font-weight: 400; font-display: swap; }
 :root {
   color-scheme: dark;
   --blue: #000cde;
-  --blue-deep: #00078a;
-  --night: #01042a;
+  --deep: #00055f;
   --volt: #d0fb07;
   --ink: #f7f8fa;
-  --ink-soft: rgb(247 248 250 / 0.8);
-  --dim: rgb(247 248 250 / 0.62);
-  --line: rgb(247 248 250 / 0.22);
-  --line-strong: rgb(247 248 250 / 0.45);
-  --panel: rgb(1 6 120 / 0.72);
-  --sans: 'Geist', ui-sans-serif, system-ui, sans-serif;
+  --ink-soft: rgb(247 248 250 / 0.78);
+  --dim: rgb(247 248 250 / 0.55);
+  --line: rgb(247 248 250 / 0.16);
+  --line-strong: rgb(247 248 250 / 0.32);
+  --glass: rgb(0 8 120 / 0.38);
+  --sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
   --mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
-  --pixel: 'Silkscreen', 'Geist Mono', ui-monospace, monospace;
   --gutter: clamp(16px, 3.6vw, 56px);
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 * { box-sizing: border-box; }
 html { background: var(--blue); }
@@ -452,86 +434,44 @@ body {
   margin: 0;
   min-height: 100dvh;
   display: grid;
-  grid-template: "top top" auto "hero hero" 1fr "foot notes" auto / minmax(0, 1fr) minmax(0, 24rem);
+  grid-template: "top top" auto "hero hero" 1fr "foot notes" auto / minmax(0, 1fr) auto;
   column-gap: var(--gutter);
-  padding: 0 var(--gutter) clamp(16px, 3vh, 40px);
+  padding: 0 var(--gutter) clamp(16px, 3vh, 36px);
   color: var(--ink);
   font: 400 16px/1.5 var(--sans);
   -webkit-font-smoothing: antialiased;
   overflow-x: clip;
 }
 a { color: inherit; }
-:focus-visible { outline: 2px solid var(--volt); outline-offset: 3px; }
+:focus-visible { outline: 2px solid var(--volt); outline-offset: 3px; border-radius: 6px; }
 ::selection { background: var(--volt); color: var(--blue); }
 [hidden] { display: none !important; }
-.mono { margin: 0; font: 400 0.72rem/1.3 var(--mono); letter-spacing: 0.02em; color: var(--dim); }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
-.backdrop, .still, .stage, .scrim { position: fixed; inset: 0; }
-.backdrop, .still, .scrim { pointer-events: none; }
-/* The sky without WebGL: a link-blue gradient over a checkerboard floor. */
-.still {
-  z-index: -5;
-  overflow: hidden;
-  background: linear-gradient(180deg, #000658 0%, var(--blue) 34%, #4a63ff 56%, #c3cdff 63.5%, #c3cdff 64%, var(--blue) 64.2%);
-}
-.still::after {
-  position: absolute;
-  top: 64%;
-  left: -60%;
-  width: 220%;
-  height: 90%;
-  background: repeating-conic-gradient(var(--blue) 0 25%, #8c9dff 0 50%) 0 0 / 140px 140px;
-  content: '';
-  transform: perspective(420px) rotateX(72deg);
-  transform-origin: 50% 0;
-  -webkit-mask-image: linear-gradient(0deg, #000 30%, transparent 92%);
-  mask-image: linear-gradient(0deg, #000 30%, transparent 92%);
-}
-.backdrop { z-index: -4; display: block; width: 100%; height: 100%; opacity: 0; transition: opacity 1.2s ease; }
+/* The field, and the still gradient under it when there is no WebGL2. */
+.backdrop, .still { position: fixed; inset: 0; pointer-events: none; }
+.still { z-index: -5; background: radial-gradient(70% 70% at 74% 30%, #1729ff, var(--blue) 55%, var(--deep)); }
+.backdrop { z-index: -4; display: block; width: 100%; height: 100%; opacity: 0; transition: opacity 0.9s ease; }
 html[data-backdrop="live"] .backdrop { opacity: 1; }
-/* The scene's own surface: it takes drags and pinches where nothing else is. */
-.stage { z-index: -3; display: none; touch-action: none; }
-html[data-backdrop="live"] .stage { display: block; }
-html[data-aim="pipe"] .stage { cursor: grab; }
-html[data-dragging] .stage { cursor: grabbing; }
-.scrim {
-  z-index: -2;
-  background:
-    linear-gradient(90deg, rgb(0 5 110 / 0.72) 0%, rgb(0 5 110 / 0.42) 32%, rgb(0 5 110 / 0) 58%),
-    linear-gradient(0deg, rgb(0 4 70 / 0.55) 0%, rgb(0 4 70 / 0) 24%);
-}
+/* The agent draws in its own small canvas, moved to wherever it is; a round
+   target under it takes touches, so a finger can pick it up too. */
+.agent, .agent-hit { position: fixed; top: 0; left: 0; z-index: 30; pointer-events: none; }
+.agent { width: 240px; height: 240px; display: none; }
+.agent-hit { width: 56px; height: 56px; margin: -28px 0 0 -28px; border-radius: 50%; touch-action: none; }
+html[data-backdrop="live"] .agent { display: block; }
+html[data-backdrop="live"][data-agent="out"] .agent-hit { pointer-events: auto; cursor: grab; }
+html[data-dragging], html[data-dragging] * { cursor: grabbing !important; }
+html[data-aim="agent"] body { cursor: grab; }
 
-.top { grid-area: top; display: flex; align-items: center; gap: 12px; padding: clamp(16px, 2.8vh, 32px) 0; }
-.brand { display: inline-flex; align-items: center; gap: 10px; color: var(--ink); font: 650 1.05rem/1 var(--sans); letter-spacing: -0.03em; text-decoration: none; }
-.brand svg { width: 28px; height: 28px; }
-.channel {
-  padding: 4px 6px 3px;
-  background: var(--volt);
-  color: var(--blue);
-  font: 400 0.6rem/1 var(--pixel);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
+.top { grid-area: top; display: flex; align-items: center; gap: 12px; padding: clamp(16px, 2.8vh, 30px) 0; }
+.brand { display: inline-flex; }
+.brand svg { width: 28px; height: 28px; transition: rotate 0.6s var(--spring); }
+.brand:hover svg { rotate: -14deg; }
+.channel { padding: 4px 9px; border: 1px solid rgb(208 251 7 / 0.45); border-radius: 999px; color: var(--volt); font: 500 0.62rem/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
 
-/* A little CD player: play and pause, the track, the time and the levels. */
-.player { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+/* A little player: play and pause, the time, the levels. */
+.player { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 html:not([data-backdrop="live"]) .player { display: none; }
-.lcd {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 7px 12px 6px;
-  border: 1px solid var(--line);
-  background: rgb(0 3 60 / 0.55);
-  color: var(--volt);
-  font: 400 0.66rem/1 var(--pixel);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-.lcd [data-time] { font-variant-numeric: tabular-nums; }
-.levels { display: inline-flex; align-items: flex-end; gap: 2px; height: 12px; }
-.levels i { width: 3px; height: calc(2px + var(--level, 0.2) * 10px); background: currentColor; }
 .play {
   display: grid;
   place-items: center;
@@ -539,200 +479,164 @@ html:not([data-backdrop="live"]) .player { display: none; }
   height: 34px;
   padding: 0;
   border: 0;
+  border-radius: 50%;
   background: var(--volt);
   color: var(--blue);
-  box-shadow: 3px 3px 0 var(--night);
   cursor: pointer;
-  transition: translate 0.15s, box-shadow 0.15s;
+  transition: scale 0.3s var(--spring), box-shadow 0.3s;
 }
-.play:hover { translate: -1px -1px; box-shadow: 4px 4px 0 var(--night); }
-.play:active { translate: 2px 2px; box-shadow: 1px 1px 0 var(--night); }
-.play svg { width: 14px; height: 14px; }
+.play:hover { scale: 1.08; box-shadow: 0 0 0 6px rgb(208 251 7 / 0.16); }
+.play svg { width: 13px; height: 13px; }
 .play .pause, .play[aria-pressed="true"] .start { display: none; }
 .play[aria-pressed="true"] .pause { display: block; }
-.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.links { display: flex; gap: 4px; }
+.lcd { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--glass); backdrop-filter: blur(12px); color: var(--ink-soft); font: 400 0.66rem/1 var(--mono); }
+.lcd [data-time] { font-variant-numeric: tabular-nums; }
+.levels { display: inline-flex; align-items: flex-end; gap: 2px; height: 11px; color: var(--volt); }
+.levels i { width: 2px; height: calc(2px + var(--level, 0.2) * 9px); border-radius: 1px; background: currentColor; }
+.links { display: flex; }
 html:not([data-backdrop="live"]) .links { margin-left: auto; }
-.link {
-  padding: 10px 12px;
-  border: 0;
-  background: none;
-  color: var(--ink-soft);
-  font: 500 0.88rem/1 var(--sans);
-  text-decoration: none;
-  cursor: pointer;
-  transition: color 0.2s, background 0.2s;
-}
-.link:hover { background: rgb(255 255 255 / 0.1); color: var(--ink); }
+.link { padding: 9px 12px; border-radius: 999px; color: var(--ink-soft); font: 500 0.9rem/1 var(--sans); text-decoration: none; transition: color 0.2s, background 0.2s; }
+.link:hover { background: rgb(255 255 255 / 0.08); color: var(--ink); }
 
-.hero { grid-area: hero; align-self: center; max-width: min(42rem, 100%); padding-block: 2vh; }
-.hero > * { transition: opacity 0.8s var(--ease), translate 0.8s var(--ease); }
+.hero { grid-area: hero; align-self: center; max-width: min(56rem, 100%); padding-block: 2vh; }
+.hero > * { transition: opacity 0.9s var(--ease), translate 0.9s var(--ease), filter 0.9s var(--ease); }
 .hero > :nth-child(2) { transition-delay: 0.08s; }
 .hero > :nth-child(3) { transition-delay: 0.16s; }
-.hero > :nth-child(4) { transition-delay: 0.24s; }
-@starting-style { .hero > * { opacity: 0; translate: 0 14px; } }
-.eyebrow { margin: 0 0 clamp(16px, 2.6vh, 28px); color: var(--ink-soft); font: 400 0.72rem/1 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; }
-h1 {
-  margin: 0;
+@starting-style { .hero > * { opacity: 0; translate: 0 16px; filter: blur(6px); } }
+/* The wordmark. Both i's are dotless; their dots are elements, and the second
+   is the agent's seat. */
+.wordmark {
+  margin: 0 0 0 -0.05em;
   color: var(--ink);
-  font: 650 clamp(2.3rem, min(5.4vw, 8.4vh), 5rem)/1 var(--sans);
-  letter-spacing: -0.045em;
-  text-wrap: balance;
+  font: 600 clamp(3.4rem, min(8.6vw, 15vh), 8.4rem)/0.9 var(--sans);
+  letter-spacing: -0.055em;
+  white-space: nowrap;
 }
-.pitch { max-width: 32rem; margin: clamp(16px, 2.6vh, 28px) 0 0; color: var(--ink-soft); font-size: clamp(1rem, 0.92rem + 0.3vw, 1.16rem); line-height: 1.55; text-wrap: pretty; }
-.pitch a { color: var(--ink); text-decoration-color: var(--volt); text-decoration-thickness: 2px; text-underline-offset: 4px; }
-.pitch a:hover { color: var(--volt); }
+.wordmark .i { position: relative; display: inline-block; }
+.dot { position: absolute; bottom: 0.66em; left: 50%; width: 0.19em; height: 0.19em; margin-left: -0.095em; border-radius: 50%; background: var(--volt); transition: background 0.3s, box-shadow 0.3s; }
+html[data-backdrop="live"] [data-home] { background: transparent; }
+html[data-backdrop="live"][data-agent="out"] [data-home] { box-shadow: inset 0 0 0 0.018em rgb(208 251 7 / 0.55); }
+.tagline { margin: clamp(14px, 2.2vh, 24px) 0 0; color: var(--ink); font: 450 clamp(1.25rem, 0.9rem + 1.1vw, 2rem)/1.2 var(--sans); letter-spacing: -0.025em; }
+.cursor { display: inline-block; width: 0.09em; height: 0.95em; margin-left: 0.12em; border-radius: 1px; background: var(--volt); translate: 0 0.14em; animation: blink 1.1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
 .soon { margin: clamp(22px, 4vh, 42px) 0 0; color: var(--ink); font: 400 0.9rem/1.4 var(--mono); }
 
-.get { margin-top: clamp(22px, 4.2vh, 44px); }
+.get { margin-top: clamp(24px, 4.4vh, 44px); }
 .primary {
   display: inline-flex;
   align-items: center;
-  gap: 14px;
-  padding: 14px 24px 14px 18px;
+  gap: 12px;
+  padding: 13px 24px 13px 16px;
+  border-radius: 999px;
   background: var(--volt);
   color: var(--blue);
   text-decoration: none;
-  box-shadow: 5px 5px 0 var(--night);
-  transition: translate 0.15s, box-shadow 0.15s;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.5), 0 10px 40px -12px rgb(208 251 7 / 0.6);
+  transition: translate 0.3s var(--spring), box-shadow 0.3s;
 }
-.primary:hover { translate: -2px -2px; box-shadow: 7px 7px 0 var(--night); }
-.primary:active { translate: 3px 3px; box-shadow: 2px 2px 0 var(--night); }
-.primary svg { width: 22px; height: 22px; flex: none; }
-.primary-title { display: block; font: 650 1.02rem/1.15 var(--sans); letter-spacing: -0.02em; }
-.primary-meta { display: block; margin-top: 4px; font: 400 0.72rem/1.3 var(--mono); opacity: 0.8; }
-.elsewhere { display: none; margin: 0; color: var(--ink); }
-.also { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 20px; }
-.also-label { margin-right: 4px; color: var(--dim); font: 400 0.68rem/1 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; }
+.primary:hover { translate: 0 -2px; box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.5), 0 16px 50px -12px rgb(208 251 7 / 0.8); }
+.primary svg { width: 20px; height: 20px; flex: none; }
+.primary-title { display: block; font: 600 1rem/1.15 var(--sans); letter-spacing: -0.01em; }
+.primary-meta { display: block; margin-top: 3px; font: 400 0.7rem/1.3 var(--mono); opacity: 0.75; }
+.elsewhere { display: none; margin: 0; color: var(--ink-soft); }
+.also { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 16px; }
 .chip {
   display: inline-flex;
   align-items: baseline;
   gap: 6px;
-  padding: 8px 12px;
-  border: 1px solid var(--line-strong);
-  background: rgb(0 5 110 / 0.35);
-  color: var(--ink);
-  font-size: 0.86rem;
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--glass);
+  backdrop-filter: blur(12px);
+  color: var(--ink-soft);
+  font-size: 0.82rem;
   text-decoration: none;
-  transition: border-color 0.2s, background 0.2s;
+  transition: border-color 0.2s, color 0.2s;
 }
-.chip span { color: var(--dim); font: 400 0.72rem/1 var(--mono); }
-.chip:hover { border-color: var(--volt); background: rgb(0 5 110 / 0.6); }
-.caveat { max-width: 30rem; margin: 12px 0 0; color: var(--dim); font-size: 0.82rem; }
+.chip span { color: var(--dim); font: 400 0.7rem/1 var(--mono); }
+.chip:hover { border-color: var(--line-strong); color: var(--ink); }
+.caveat { max-width: 30rem; margin: 10px 0 0; color: var(--dim); font-size: 0.8rem; }
 html[data-get="elsewhere"] .primary { display: none; }
 html[data-get="elsewhere"] .elsewhere { display: block; }
-html[data-get="elsewhere"] .also-label { display: none; }
 
-/* Panels with a thin title bar, like a window from 1997 kept tidy. */
-.notes-card, dialog { border: 1px solid var(--line-strong); background: var(--panel); }
-.notes-card {
-  grid-area: notes;
-  align-self: end;
-  width: 100%;
-  padding: 0 16px 10px;
-  backdrop-filter: blur(16px) saturate(1.3);
-  box-shadow: 6px 6px 0 rgb(1 4 42 / 0.6);
-}
-.notes-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 -16px; padding: 7px 16px 6px; border-bottom: 1px solid var(--line); background: rgb(247 248 250 / 0.08); }
-.notes-head h2 { margin: 0; color: var(--volt); font: 400 0.66rem/1 var(--pixel); letter-spacing: 0.04em; text-transform: uppercase; }
-.excerpt { display: grid; gap: 8px; margin: 12px 0 6px; padding: 0; list-style: none; }
-.excerpt li {
-  position: relative;
-  display: -webkit-box;
-  padding-left: 16px;
-  overflow: hidden;
-  color: var(--ink-soft);
-  font-size: 0.88rem;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-.excerpt li::before { position: absolute; top: 0.55em; left: 0; width: 6px; height: 6px; background: var(--volt); content: ''; }
-.more {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 4px;
-  padding: 8px 0;
-  border: 0;
-  background: none;
-  color: var(--ink);
-  font: 600 0.86rem/1 var(--sans);
-  cursor: pointer;
-}
-.more span { transition: translate 0.25s var(--ease); }
-.more:hover span { translate: 4px 0; }
-
-.foot { grid-area: foot; align-self: end; display: flex; flex-wrap: wrap; gap: 4px 16px; color: var(--dim); font: 400 0.68rem/1.5 var(--mono); letter-spacing: 0.04em; }
-.foot a { color: var(--ink-soft); text-decoration: none; border-bottom: 1px solid var(--line); }
-.foot a:hover { color: var(--ink); }
-
-/* How to play, along the right edge. */
-.hint {
+/* What the agent noticed and decided, newest at the bottom. */
+.log {
   position: fixed;
-  top: 50%;
-  right: calc(var(--gutter) * 0.45);
+  right: var(--gutter);
+  bottom: calc(clamp(16px, 3vh, 36px) + 52px);
   z-index: 1;
+  display: grid;
+  gap: 5px;
+  width: min(23rem, 40vw);
   margin: 0;
-  color: var(--dim);
-  font: 400 0.62rem/1 var(--mono);
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-  writing-mode: vertical-rl;
-  translate: 0 -50%;
+  padding: 0;
+  list-style: none;
+  color: var(--ink-soft);
+  font: 400 0.7rem/1.4 var(--mono);
   pointer-events: none;
 }
-.hint .touch { display: none; }
-html:not([data-backdrop="live"]) .hint { display: none; }
-@media (pointer: coarse) {
-  .hint .fine { display: none; }
-  .hint .touch { display: inline; }
+.log li { display: flex; gap: 10px; animation: arrive 0.4s var(--ease); }
+.log li:not(:last-child) { opacity: 0.5; }
+.log li:nth-last-child(n + 4) { opacity: 0.25; }
+.log time { flex: none; color: var(--volt); opacity: 0.8; }
+@keyframes arrive { from { opacity: 0; translate: 0 6px; } }
+html:not([data-backdrop="live"]) .log { display: none; }
+
+.notes-pill {
+  grid-area: notes;
+  align-self: end;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--glass);
+  backdrop-filter: blur(12px);
+  color: var(--ink-soft);
+  font: 500 0.78rem/1 var(--sans);
+  cursor: pointer;
+  transition: border-color 0.2s, color 0.2s;
 }
+.notes-pill:hover { border-color: var(--line-strong); color: var(--ink); }
+.notes-pill i { width: 6px; height: 6px; border-radius: 50%; background: var(--volt); box-shadow: 0 0 10px var(--volt); }
+.notes-pill span { transition: translate 0.25s var(--ease); }
+.notes-pill:hover span { translate: 3px 0; }
+
+.foot { grid-area: foot; align-self: end; display: flex; flex-wrap: wrap; gap: 4px 16px; color: var(--dim); font: 400 0.68rem/1.5 var(--mono); }
+.foot a { color: var(--ink-soft); text-decoration: none; }
+.foot a:hover { color: var(--ink); }
 
 dialog {
   width: min(42rem, calc(100vw - 32px));
   max-height: min(82dvh, 46rem);
   padding: 0;
   overflow: hidden;
-  --panel: rgb(1 6 110 / 0.95);
+  border: 1px solid var(--line-strong);
+  border-radius: 22px;
+  background: rgb(0 8 110 / 0.9);
   backdrop-filter: blur(24px) saturate(1.3);
-  box-shadow: 10px 10px 0 rgb(1 4 42 / 0.7);
+  box-shadow: 0 40px 120px -30px rgb(0 0 0 / 0.7);
   color: var(--ink);
   opacity: 0;
-  translate: 0 10px;
-  transition: opacity 0.25s var(--ease), translate 0.25s var(--ease), overlay 0.25s allow-discrete, display 0.25s allow-discrete;
+  scale: 0.97;
+  transition: opacity 0.25s var(--ease), scale 0.25s var(--ease), overlay 0.25s allow-discrete, display 0.25s allow-discrete;
 }
-dialog[open] { display: flex; flex-direction: column; opacity: 1; translate: 0 0; }
-@starting-style { dialog[open] { opacity: 0; translate: 0 10px; } }
-dialog::backdrop { background: rgb(1 4 42 / 0.5); backdrop-filter: blur(4px); }
-.dialog-head { display: flex; align-items: flex-start; gap: 12px; padding: 14px 16px 12px 20px; border-bottom: 1px solid var(--line); background: rgb(247 248 250 / 0.08); }
-.dialog-head .mono { color: var(--volt); font-family: var(--pixel); font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.04em; }
-.dialog-head h2 { margin: 6px 0 0; color: var(--ink); font: 650 1.25rem/1.2 var(--sans); letter-spacing: -0.03em; }
-.close {
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  margin-left: auto;
-  border: 1px solid var(--line-strong);
-  background: none;
-  color: var(--ink);
-  cursor: pointer;
-}
-.close:hover { background: rgb(255 255 255 / 0.12); }
-.close svg { width: 16px; height: 16px; }
-.dialog-body { padding: 18px 20px 22px; overflow-y: auto; overscroll-behavior: contain; }
+dialog[open] { display: flex; flex-direction: column; opacity: 1; scale: 1; }
+@starting-style { dialog[open] { opacity: 0; scale: 0.97; } }
+dialog::backdrop { background: rgb(0 3 50 / 0.45); backdrop-filter: blur(4px); }
+.dialog-head { display: flex; align-items: flex-start; gap: 12px; padding: 18px 18px 14px 22px; border-bottom: 1px solid var(--line); }
+.dialog-head .mono { margin: 0; color: var(--volt); font: 400 0.68rem/1.3 var(--mono); }
+.dialog-head h2 { margin: 6px 0 0; color: var(--ink); font: 600 1.3rem/1.2 var(--sans); letter-spacing: -0.02em; }
+.close { display: grid; place-items: center; width: 32px; height: 32px; margin-left: auto; border: 1px solid var(--line-strong); border-radius: 50%; background: none; color: var(--ink); cursor: pointer; }
+.close:hover { background: rgb(255 255 255 / 0.1); }
+.close svg { width: 15px; height: 15px; }
+.dialog-body { padding: 18px 22px 22px; overflow-y: auto; overscroll-behavior: contain; }
 .notes-body { line-height: 1.6; }
 .notes-body > :first-child { margin-top: 0; }
 .notes-body p, .notes-body li { overflow-wrap: anywhere; }
-.notes-body h3, .notes-body h4, .sums-title {
-  margin: 22px 0 8px;
-  color: var(--volt);
-  font: 400 0.66rem/1.3 var(--pixel);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
+.notes-body h3, .notes-body h4, .sums-title { margin: 22px 0 8px; color: var(--volt); font: 500 0.7rem/1.3 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
 .notes-body a, .sums a { color: var(--ink); text-decoration-color: var(--volt); text-underline-offset: 3px; }
 .notes-body code { font: 0.85em var(--mono); }
 .sums { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
@@ -742,34 +646,24 @@ dialog::backdrop { background: rgb(1 4 42 / 0.5); backdrop-filter: blur(4px); }
 .sums code { color: var(--ink-soft); font: 400 0.7rem/1.5 var(--mono); word-break: break-all; }
 .sums-links { display: flex; gap: 18px; margin: 14px 0 0; font-size: 0.86rem; }
 
-@media (max-height: 640px) and (min-width: 761px) {
-  .excerpt li:nth-child(n + 2) { display: none; }
-}
 @media (max-width: 1100px) and (min-width: 761px) {
-  .lcd [data-track] { display: none; }
+  .lcd [data-time] { display: none; }
 }
 @media (max-width: 760px) {
   body { grid-template: "top" auto "hero" 1fr "notes" auto / minmax(0, 1fr); row-gap: 14px; }
-  .scrim { background: linear-gradient(180deg, rgb(0 5 110 / 0) 0%, rgb(0 5 110 / 0) 30%, rgb(0 5 110 / 0.55) 50%, rgb(1 4 60 / 0.9) 72%); }
-  .lcd { gap: 10px; padding: 7px 9px 6px; }
-  .lcd [data-track] { display: none; }
-  .links .link-notes { display: none; }
+  /* Instrument Sans sets "Brainstrike" about 4.9em wide; this fills the column. */
+  .wordmark { font-size: calc((100vw - 2 * var(--gutter)) / 5); }
   .hero { align-self: end; padding-block: 0; }
-  h1 { font-size: clamp(2.1rem, 9.6vw, 3rem); }
-  .pitch { margin-top: 14px; }
   .get { margin-top: 22px; }
   .primary { width: 100%; }
-  .notes-card { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding: 10px 14px; }
-  .notes-head { display: block; margin: 0; padding: 0; border: 0; background: none; }
-  .notes-head .mono { display: block; margin-top: 4px; }
-  .excerpt { display: none; }
-  .more { margin: 0; white-space: nowrap; }
+  .notes-pill { justify-self: start; }
   .foot { display: none; }
-  .hint { top: 72px; right: 0; left: 0; text-align: center; writing-mode: horizontal-tb; translate: none; letter-spacing: 0.14em; }
+  .log { top: 74px; right: var(--gutter); bottom: auto; left: var(--gutter); width: auto; }
+  .log li:nth-last-child(n + 3) { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
-  .player, .hint { display: none; }
+  .player { display: none; }
 }
 `;
 
@@ -777,9 +671,6 @@ function renderPage(manifest, notes) {
   const release = manifest ? renderRelease(manifest, notes) : null;
   const label = manifest ? CHANNEL_LABELS[manifest.channel] : null;
   const channel = label ? `<span class="channel">${label}</span>` : '';
-  const notesLink = release
-    ? '<button type="button" class="link link-notes" commandfor="notes" command="show-modal">Release notes</button>'
-    : '';
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -797,31 +688,29 @@ function renderPage(manifest, notes) {
 <link rel="icon" href="/favicon.ico" sizes="any">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-<link rel="preload" href="/fonts/geist.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="preload" href="/fonts/silkscreen.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/instrument-sans.woff2" as="font" type="font/woff2" crossorigin>
 <style>${STYLES}</style>
 </head>
 <body>
 <canvas class="backdrop" aria-hidden="true"></canvas>
 <div class="still" aria-hidden="true"></div>
-<div class="stage" aria-hidden="true"></div>
-<div class="scrim" aria-hidden="true"></div>
+<canvas class="agent" aria-hidden="true"></canvas>
+<div class="agent-hit" aria-hidden="true"></div>
 <header class="top">
-<a class="brand" href="/">${brandMark}<span>Brainstrike</span></a>
+<a class="brand" href="/">${brandMark}<span class="sr-only">Brainstrike</span></a>
 ${channel}
-<div class="player"><button type="button" class="play" data-sound aria-pressed="false" hidden><svg class="start" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11l9-5.5z" fill="currentColor"/></svg><svg class="pause" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 2.5h3v11h-3zm6 0h3v11h-3z" fill="currentColor"/></svg><span class="sr-only" data-sound-label>Play the music</span></button><span class="lcd" aria-hidden="true"><span data-track>01 Daylight</span><span data-time>00:00</span><span class="levels"><i data-level></i><i data-level></i><i data-level></i><i data-level></i><i data-level></i><i data-level></i></span></span></div>
-<nav class="links" aria-label="Site">${notesLink}<a class="link" href="${RELEASES_HUB_URL}">GitHub</a></nav>
+<div class="player"><button type="button" class="play" data-sound data-agent="play" aria-pressed="false" hidden><svg class="start" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11l9-5.5z" fill="currentColor"/></svg><svg class="pause" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 2.5h3v11h-3zm6 0h3v11h-3z" fill="currentColor"/></svg><span class="sr-only" data-sound-label>Play the music</span></button><span class="lcd" aria-hidden="true"><span data-time>00:00</span><span class="levels"><i data-level></i><i data-level></i><i data-level></i><i data-level></i><i data-level></i><i data-level></i></span></span></div>
+<nav class="links" aria-label="Site"><a class="link" href="${RELEASES_HUB_URL}" data-agent="github">GitHub</a></nav>
 </header>
 <main class="hero">
-<p class="eyebrow">${release ? release.eyebrow : 'Desktop agent workspace'}</p>
-<h1>Agents that show their work.</h1>
-<p class="pitch">Brainstrike runs agents inside your folders. They read and edit files, run commands and hand work to each other, and you see every step. Threads are saved on your computer, and it runs on the model keys you already have. It’s in beta: <a href="${ISSUES_URL}">report what breaks</a>.</p>
+<h1 class="wordmark" aria-label="Brainstrike" data-agent="wordmark"><span aria-hidden="true">Bra<span class="i">ı<i class="dot"></i></span>nstr<span class="i">ı<i class="dot" data-home></i></span>ke</span></h1>
+<p class="tagline" data-agent="tagline">Agents that show their work.<span class="cursor" aria-hidden="true"></span></p>
 ${release ? release.get : '<p class="soon">The first beta is on its way.</p>'}
 </main>
 ${release ? release.card : ''}
 ${release ? release.footer : ''}
 ${release ? release.dialog : ''}
-<p class="hint" aria-hidden="true"><span class="fine">Drag to orbit · Scroll to zoom · Click to start a pipe · Pull a pipe to bend it</span><span class="touch">Drag · Pinch · Tap a pipe</span></p>
+<ol class="log" data-log aria-hidden="true"></ol>
 <script>${DIALOG_SCRIPT}</script>
 <script type="module" src="/backdrop.js"></script>
 </body>
