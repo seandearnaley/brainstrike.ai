@@ -1,873 +1,1149 @@
-// The playable backdrop of brainstrike.ai, drawn with WebGPU.
+// The playable backdrop of brainstrike.ai: the 1990s pipe screensaver,
+// dreaming in 2026. Chrome, enamel and pearl pipes grow through a box of
+// space one cell per beat, turning at right angles, over an endless
+// checkerboard floor under a link-blue sky, while two Mystify ribbons drift
+// behind them. Every turn a pipe takes plays a note when the music is on.
+// The music alternates two 16-bar sections, Daylight and Night mall; at each
+// change the pipes dissolve, dithered down to a 1990s palette, and new ones
+// start.
 //
-// One fragment shader ray-marches the whole scene: a glass core that changes
-// shape every four bars, five shards orbiting it, a field of chrome shards and
-// a hexagonal tunnel of neon rings streaming past at 128 BPM. Every eight bars
-// the scene moves to its next area and colors. A bloom pass and a composite
-// pass add glow, chromatic aberration, glitch tears and grain.
+// Visitors drag to orbit (with momentum), scroll or pinch to zoom, click
+// empty space to start a pipe, click a pipe to ring it, and pull a pipe to
+// bend it like rubber; it springs back when let go.
 //
-// The visitor plays it: drag to orbit, scroll or pinch to zoom, click the core
-// to change its shape, click anywhere else to strike lightning there, and
-// press and drag the core to pull it out like taffy. Strikes land on the next
-// sixteenth note. With sound on (synth.js), the same clock plays the music.
-//
-// Without WebGPU, or when it fails, the page keeps its still backdrop and the
-// console says why. Reduced motion draws one frame and takes no input. A
-// hidden tab stops the loop and the sound.
+// It draws with WebGL2, which every current browser has. A lost GL context
+// (sleep and wake, a GPU switch, a backgrounded tab on a phone) is rebuilt
+// when the browser restores it. Without WebGL2 the page keeps its CSS sky and
+// says why in html[data-backdrop-reason]; with reduced motion it draws one
+// still frame and takes no input.
 
 import { createSynth } from './synth.js';
 
-const canvas = document.querySelector('canvas.backdrop');
-const root = document.documentElement;
-const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
-
-const BPM = 128;
+const BPM = 100;
 const BEAT = 60 / BPM;
-const FORM_BEATS = 16; // the core changes shape every four bars
-const AREA_BEATS = 32; // and the scene changes area every eight
-const FORMS = 5;
-const FOCAL = 1.9;
+const SECTION_BEATS = 64; // 16 bars
+const SECTION = SECTION_BEATS * BEAT;
+const SECTIONS = ['Daylight', 'Night mall'];
+const DISSOLVE_BEATS = 4; // the last bar of a section dissolves the pipes
+const LOOKAHEAD = 0.12; // pipes decide their next step this far ahead, for the music
+
+const BOX = [6, 4, 5]; // half-extent of the grid, in cells
+const PIPE_RADIUS = 0.19;
+const JOINT_RADIUS = 0.3;
+const MAX_SEGMENTS = 360;
+const MAX_JOINTS = 360;
+const PIPE_LIFE = 44; // the longest a pipe grows, in cells
+const PIPES_WANTED = [3, 2]; // pipes growing at once, per section
+
 const DPR_CAP = 1.5;
-const UNIFORM_FLOATS = 88;
+const FOCAL = 1.75;
 
-// Each area's three colors, in linear RGB; the shader cycles through them.
-const AREAS = [
-  { colors: [[0.1, 0.9, 1], [0.45, 0.2, 1], [1, 0.2, 0.75]], name: 'Signal' },
-  { colors: [[0.6, 1, 0.25], [0, 0.8, 0.7], [0.25, 0.5, 1]], name: 'Bloom' },
-  { colors: [[1, 0.35, 0.3], [1, 0.75, 0.2], [1, 0.3, 0.65]], name: 'Solar' },
-  { colors: [[0.6, 0.45, 1], [0.8, 0.95, 1], [1, 0.5, 0.8]], name: 'Euphoria' },
-];
-
-const COMMON = /* wgsl */ `
-struct U {
-  res: vec2f, time: f32, beat: f32,
-  eye: vec3f, kick: f32,
-  right: vec3f, focal: f32,
-  up: vec3f, glitch: f32,
-  fwd: vec3f, flight: f32,
-  shift: vec2f, morph: f32, formA: f32,
-  formB: f32, wave: f32, boltLight: f32, slice: f32,
-  grabA: vec3f, grab: f32,
-  grabB: vec3f, steps: f32,
-  colA: vec4f, colB: vec4f, colC: vec4f, flash: vec4f,
-  bolt: array<vec4f, 9>,
-};
-@group(0) @binding(0) var<uniform> u: U;
-
-const PI: f32 = 3.14159265;
-const TAU: f32 = 6.28318531;
-
-fn hash11(x: f32) -> f32 {
-  return fract(sin(x * 91.3458) * 47453.5453);
-}
-
-fn hash31(p: vec3f) -> f32 {
-  return fract(sin(dot(p, vec3f(127.1, 311.7, 74.7))) * 43758.5453);
-}
-
-fn rot(a: f32) -> mat2x2f {
-  let c = cos(a);
-  let s = sin(a);
-  return mat2x2f(c, s, -s, c);
-}
-
-// The area's colors as a loop: 0, 1/3 and 2/3 are its three colors.
-fn pal(t: f32) -> vec3f {
-  let f = fract(t) * 3.0;
-  let k = smoothstep(0.0, 1.0, fract(f));
-  let i = floor(f);
-  let a = select(select(u.colC.xyz, u.colB.xyz, i < 1.5), u.colA.xyz, i < 0.5);
-  let b = select(select(u.colA.xyz, u.colC.xyz, i < 1.5), u.colB.xyz, i < 0.5);
-  return mix(a, b, k);
-}
-`;
-
-const FULLSCREEN = /* wgsl */ `
-struct FOut { @builtin(position) clip: vec4f, @location(0) uv: vec2f };
-
-@vertex
-fn vs(@builtin(vertex_index) v: u32) -> FOut {
-  var corners = array<vec2f, 3>(vec2f(-1.0, -3.0), vec2f(-1.0, 1.0), vec2f(3.0, 1.0));
-  let p = corners[v];
-  var o: FOut;
-  o.clip = vec4f(p, 0.0, 1.0);
-  o.uv = vec2f(p.x * 0.5 + 0.5, 0.5 - p.y * 0.5);
-  return o;
-}
-`;
-
-const SCENE = /* wgsl */ `${COMMON}${FULLSCREEN}
-const TUNNEL: f32 = 11.5;
-const RING_GAP: f32 = 6.0;
-const CELL: f32 = 2.6;
-const FAR: f32 = 48.0;
-
-fn smin(a: f32, b: f32, k: f32) -> f32 {
-  let h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
-  return mix(b, a, h) - k * h * (1.0 - h);
-}
-
-fn sdOcta(p: vec3f, s: f32) -> f32 {
-  let q = abs(p);
-  return (q.x + q.y + q.z - s) * 0.57735027;
-}
-
-fn sdTorus(p: vec3f, t: vec2f) -> f32 {
-  return length(vec2f(length(p.xz) - t.x, p.y)) - t.y;
-}
-
-fn sdBoxFrame(p0: vec3f, b: vec3f, e: f32) -> f32 {
-  let p = abs(p0) - b;
-  let q = abs(p + e) - e;
-  return min(
-    min(
-      length(max(vec3f(p.x, q.y, q.z), vec3f(0.0))) + min(max(p.x, max(q.y, q.z)), 0.0),
-      length(max(vec3f(q.x, p.y, q.z), vec3f(0.0))) + min(max(q.x, max(p.y, q.z)), 0.0)
-    ),
-    length(max(vec3f(q.x, q.y, p.z), vec3f(0.0))) + min(max(q.x, max(q.y, p.z)), 0.0)
-  );
-}
-
-fn sdCapsule(p: vec3f, a: vec3f, b: vec3f, r: f32) -> f32 {
-  let pa = p - a;
-  let ba = b - a;
-  let h = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-6), 0.0, 1.0);
-  return length(pa - ba * h) - r;
-}
-
-fn sdHex(p0: vec2f, r: f32) -> f32 {
-  let k = vec3f(-0.866025404, 0.5, 0.577350269);
-  var p = abs(p0);
-  p -= 2.0 * min(dot(k.xy, p), 0.0) * k.xy;
-  p -= vec2f(clamp(p.x, -k.z * r, k.z * r), r);
-  return length(p) * sign(p.y);
-}
-
-fn gyroid(p: vec3f) -> f32 {
-  return dot(sin(p), cos(p.yzx));
-}
-
-// The core's five shapes, each about two and a half units across: a
-// breathing blob, an octahedron, a torus, a wire cube and a gyroid lattice
-// inside a sphere.
-fn form(i: i32, p: vec3f) -> f32 {
-  switch i {
-    case 0: {
-      return (length(p) - 1.15 - 0.09 * gyroid(p * 3.2 + u.time * 0.8)) * 0.8;
-    }
-    case 1: {
-      return sdOcta(p, 1.65) - 0.04;
-    }
-    case 2: {
-      return sdTorus(p, vec2f(1.05, 0.32));
-    }
-    case 3: {
-      return sdBoxFrame(p, vec3f(0.92), 0.07) - 0.02;
-    }
-    default: {
-      return max(length(p) - 1.3, (abs(gyroid(p * 3.6)) / 3.6 - 0.07) * 0.8);
-    }
-  }
-}
-
-fn core(p0: vec3f) -> f32 {
-  let s = 1.0 + 0.07 * u.kick;
-  var p = p0 / s;
-  let xz = rot(u.time * 0.31) * vec2f(p.x, p.z);
-  p = vec3f(xz.x, p.y, xz.y);
-  let yz = rot(u.time * 0.19) * vec2f(p.y, p.z);
-  p = vec3f(p.x, yz.x, yz.y);
-  // While it changes shape, the core tears into sliding bands.
-  let band = floor(p.y * 9.0 + u.time * 13.0);
-  p.x += (hash11(band) - 0.5) * 0.6 * u.slice;
-  var d = mix(form(i32(u.formA), p), form(i32(u.formB), p), u.morph) * s;
-  if (u.grab > 0.001) {
-    // Pulled out like taffy: a tendril to the pointer, thinner as it stretches.
-    let stretch = clamp(distance(u.grabA, u.grabB) / 3.2, 0.0, 1.0);
-    d = smin(d, sdCapsule(p0, u.grabA, u.grabB, mix(0.34, 0.1, stretch) * u.grab), 0.5 * u.grab + 0.001);
-  }
-  return d;
-}
-
-fn orbiters(p: vec3f) -> f32 {
-  var d = 1e9;
-  for (var i = 0; i < 5; i++) {
-    let f = f32(i);
-    let a = u.time * (0.45 + f * 0.11) + f * 1.2566;
-    var c = vec3f(cos(a) * 2.6, 0.0, sin(a) * 2.6);
-    let tilt = rot(f * 0.7 - 1.0) * vec2f(c.y, c.z);
-    c = vec3f(c.x, tilt.x, tilt.y);
-    var q = p - c;
-    let spin = rot(u.time * 1.3 + f) * q.xy;
-    q = vec3f(spin, q.z);
-    d = min(d, sdOcta(q, 0.24 + 0.1 * u.kick));
-  }
-  return d;
-}
-
-// A field of chrome shards between the core and the tunnel, streaming past.
-// x is the distance, y the shard's random tag.
-fn shards(p0: vec3f) -> vec2f {
-  let p = vec3f(p0.xy, p0.z - u.flight);
-  let id = floor(p / CELL + 0.5);
-  let q = p - id * CELL;
-  let h = hash31(id);
-  // Never step past a neighbor's shard: none reaches more than 0.5 from the
-  // middle of its cell.
-  let safe = CELL - 0.5 - max(abs(q.x), max(abs(q.y), abs(q.z)));
-  let rad = length(id.xy * CELL);
-  if (rad < 3.8 || rad > 9.8 || h < 0.55) {
-    return vec2f(safe, h);
-  }
-  let a = rot(u.time * (0.6 + h) + h * 6.0) * q.xy;
-  var r = vec3f(a, q.z);
-  let b = rot(u.time * 0.8 + h * 3.0) * vec2f(r.y, r.z);
-  r = vec3f(r.x, b.x, b.y);
-  return vec2f(min(sdOcta(r, 0.2 + 0.3 * fract(h * 7.3)), safe), h);
-}
-
-// The tunnel's neon rings; y is the ring's index.
-fn rings(p0: vec3f) -> vec2f {
-  let z = p0.z - u.flight;
-  let cell = floor(z / RING_GAP + 0.5);
-  let xy = rot(cell * 0.35 + u.time * 0.05) * p0.xy;
-  let d = length(vec2f(sdHex(xy, TUNNEL + sin(cell * 1.7) * 0.7), z - cell * RING_GAP)) - 0.035;
-  return vec2f(d, cell);
-}
-
-// Six rails of light along the tunnel.
-fn rails(p: vec3f) -> f32 {
-  let sector = round(atan2(p.y, p.x) / (TAU / 6.0));
-  let xy = rot(-sector * TAU / 6.0) * p.xy;
-  return length(xy - vec2f(TUNNEL * 1.22, 0.0)) - 0.02;
-}
-
-fn bolt(p: vec3f) -> f32 {
-  var d = 1e9;
-  for (var i = 0; i < 8; i++) {
-    d = min(d, sdCapsule(p, u.bolt[i].xyz, u.bolt[i + 1].xyz, 0.01));
-  }
-  return d;
-}
-
-fn solids(p: vec3f) -> f32 {
-  return min(orbiters(p), shards(p).x);
-}
-
-fn coreNormal(p: vec3f) -> vec3f {
-  let e = vec2f(0.0015, -0.0015);
-  return normalize(
-    e.xyy * core(p + e.xyy) + e.yyx * core(p + e.yyx) + e.yxy * core(p + e.yxy) + e.xxx * core(p + e.xxx)
-  );
-}
-
-fn solidNormal(p: vec3f) -> vec3f {
-  let e = vec2f(0.0015, -0.0015);
-  return normalize(
-    e.xyy * solids(p + e.xyy) + e.yyx * solids(p + e.yyx) + e.yxy * solids(p + e.yxy) + e.xxx * solids(p + e.xxx)
-  );
-}
-
-// Deep space in the area's colors: a slow nebula and a few stars.
-fn sky(rd: vec3f) -> vec3f {
-  let n = sin(rd.x * 3.1 + u.time * 0.05) * sin(rd.y * 4.3 - u.time * 0.04) * sin(rd.z * 2.7 + 1.3) +
-    0.5 * sin(rd.x * 7.9 - rd.z * 5.1 + u.time * 0.08) * sin(rd.y * 8.3 + rd.x * 3.0);
-  var c = mix(u.colB.xyz * 0.008, pal(0.3 + n * 0.25 + rd.y * 0.2) * 0.12, smoothstep(-0.3, 1.4, n));
-  let g = rd * 150.0;
-  let h = hash31(floor(g));
-  c += vec3f(step(0.996, h) * smoothstep(0.45, 0.0, length(fract(g) - 0.5)) * (0.5 + 0.5 * sin(u.time * 3.0 + h * 50.0)));
-  return c;
-}
-
-// What a mirror sees: the sky, the tunnel's rings sweeping past and a light
-// overhead.
-fn env(r: vec3f) -> vec3f {
-  let sweep = smoothstep(0.9, 1.0, sin(r.z * 7.0 + u.flight * 1.1));
-  return sky(r) * 2.0 + pal(r.z * 0.3 + u.beat * 0.02) * sweep * 0.7 +
-    vec3f(1.0) * pow(max(dot(r, normalize(vec3f(0.3, 0.9, 0.4))), 0.0), 30.0) * 2.5;
-}
-
-fn shadeCore(p: vec3f, rd: vec3f) -> vec3f {
-  let n = coreNormal(p);
-  let nv = clamp(dot(n, -rd), 0.0, 1.0);
-  let fres = pow(1.0 - nv, 3.0);
-  // Thin film: the hue shifts with the angle the surface is seen at.
-  let film = pal(nv * 1.4 + u.beat * 0.03 + 0.15);
-  let through = sky(refract(rd, n, 0.7)) * 3.0 + film * 0.12;
-  let mirror = env(reflect(rd, n)) * mix(vec3f(0.3), film, 0.7);
-  // Veins of light drift through the glass and flare on every kick.
-  let veins = pow(abs(sin(gyroid(p * 4.5 + u.time * 0.5) * 3.0)), 24.0);
-  let glow = film * (0.05 + 0.7 * u.kick + veins * (0.2 + 1.2 * u.kick)) * (1.0 - fres);
-  return through * film * (1.0 - fres) + mirror * (0.35 + 1.6 * fres) + glow;
-}
-
-fn shadeSolid(p: vec3f, rd: vec3f, tag: f32) -> vec3f {
-  let n = solidNormal(p);
-  let fres = pow(1.0 - clamp(dot(n, -rd), 0.0, 1.0), 4.0);
-  let tint = pal(tag * 3.0 + u.beat * 0.05);
-  return env(reflect(rd, n)) * mix(tint, vec3f(1.0), 0.35) * (0.7 + 1.4 * fres) + tint * 0.06;
-}
-
-@fragment
-fn march(in: FOut) -> @location(0) vec4f {
-  let ndc = vec2f(in.uv.x * 2.0 - 1.0, 1.0 - in.uv.y * 2.0);
-  let aspect = u.res.x / u.res.y;
-  let rd = normalize(u.fwd * u.focal + u.right * (ndc.x * aspect + u.shift.x) + u.up * (ndc.y + u.shift.y));
-  let ro = u.eye;
-  var t = 0.0;
-  var glow = vec3f(0.0);
-  var hit = 0;
-  var tag = 0.0;
-  var ring = 0.0;
-  let striking = u.boltLight > 0.01;
-  for (var i = 0; i < 128; i++) {
-    if (f32(i) >= u.steps) {
-      break;
-    }
-    let p = ro + rd * t;
-    let dc = core(p);
-    let dob = orbiters(p);
-    let sh = shards(p);
-    let rg = rings(p);
-    let dr = rails(p);
-    let solid = min(min(dc, dob), min(sh.x, min(rg.x, dr)));
-    // The lightning only glows; rays slow down near it but pass through.
-    var db = 1e9;
-    var d = solid;
-    if (striking) {
-      db = bolt(p);
-      d = min(d, max(db, 0.012));
-    }
-    let adv = max(d * 0.8, 0.004);
-    // A pulse runs down the tunnel's rings on every bar.
-    let flash = exp(-fract(u.beat * 0.25 - rg.y * 0.0625) * 5.0);
-    glow += pal(rg.y * 0.13 + u.beat * 0.02) * (0.5 + 2.5 * flash) * exp(-rg.x * 22.0) * adv * 1.6;
-    glow += pal(atan2(p.y, p.x) * 0.16 + 0.5) * exp(-dr * 26.0) * adv * 0.7;
-    glow += pal(0.5 + u.beat * 0.01) * exp(-max(dc, 0.0) * 3.0) * adv * (0.012 + 0.05 * u.kick);
-    if (u.wave > 0.0) {
-      let shell = abs(length(p) - u.wave);
-      glow += pal(0.8) * exp(-shell * 9.0) * adv * 0.12 * exp(-u.wave * 0.15);
-    }
-    if (striking) {
-      glow += (vec3f(1.0, 0.95, 1.0) * exp(-db * 40.0) * 2.4 + pal(0.6) * exp(-db * 5.0) * 0.14) * adv * u.boltLight;
-    }
-    if (solid < 0.0008 + 0.0012 * t) {
-      if (solid == dc) {
-        hit = 1;
-      } else if (solid == dob) {
-        hit = 2;
-      } else if (solid == sh.x) {
-        hit = 2;
-        tag = sh.y;
-      } else if (solid == rg.x) {
-        hit = 3;
-        ring = rg.y;
-      } else {
-        hit = 4;
-      }
-      break;
-    }
-    t += adv;
-    if (t > FAR) {
-      break;
-    }
-  }
-  let p = ro + rd * t;
-  var c = sky(rd);
-  if (hit == 1) {
-    c = shadeCore(p, rd);
-  } else if (hit == 2) {
-    c = shadeSolid(p, rd, tag);
-  } else if (hit == 3) {
-    c = pal(ring * 0.13 + u.beat * 0.02) * 3.0;
-  } else if (hit == 4) {
-    c = pal(atan2(p.y, p.x) * 0.16 + 0.5) * 2.0;
-  }
-  if (hit > 0) {
-    c = mix(c, sky(rd), 1.0 - exp(-max(t - 5.0, 0.0) * 0.04));
-  }
-  c += glow + u.flash.xyz * u.flash.w;
-  return vec4f(c, 1.0);
-}
-`;
-
-const BLUR = /* wgsl */ `${FULLSCREEN}
-struct PassU { texel: vec2f, dir: vec2f };
-@group(0) @binding(0) var src: texture_2d<f32>;
-@group(0) @binding(1) var samp: sampler;
-@group(0) @binding(2) var<uniform> pu: PassU;
-
-// Four bilinear taps: a 4x4 box, for the quarter-size bloom target.
-@fragment
-fn down(in: FOut) -> @location(0) vec4f {
-  let t = pu.texel;
-  var c = textureSample(src, samp, in.uv + t * vec2f(-1.0, -1.0)).rgb;
-  c += textureSample(src, samp, in.uv + t * vec2f(1.0, -1.0)).rgb;
-  c += textureSample(src, samp, in.uv + t * vec2f(-1.0, 1.0)).rgb;
-  c += textureSample(src, samp, in.uv + t * vec2f(1.0, 1.0)).rgb;
-  return vec4f(c * 0.25, 1.0);
-}
-
-// A 9-tap Gaussian in five linear fetches, along pu.dir.
-@fragment
-fn blur(in: FOut) -> @location(0) vec4f {
-  let o1 = pu.dir * 1.3846153846;
-  let o2 = pu.dir * 3.2307692308;
-  var c = textureSample(src, samp, in.uv).rgb * 0.2270270270;
-  c += (textureSample(src, samp, in.uv + o1).rgb + textureSample(src, samp, in.uv - o1).rgb) * 0.3162162162;
-  c += (textureSample(src, samp, in.uv + o2).rgb + textureSample(src, samp, in.uv - o2).rgb) * 0.0702702703;
-  return vec4f(c, 1.0);
-}
-`;
-
-const COMPOSITE = /* wgsl */ `${COMMON}${FULLSCREEN}
-@group(0) @binding(1) var scene: texture_2d<f32>;
-@group(0) @binding(2) var bloom: texture_2d<f32>;
-@group(0) @binding(3) var samp: sampler;
-
-fn aces(x: vec3f) -> vec3f {
-  return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), vec3f(0.0), vec3f(1.0));
-}
-
-@fragment
-fn fs(in: FOut) -> @location(0) vec4f {
-  var uv = in.uv;
-  let g = u.glitch;
-  // Glitch: rows of the picture tear sideways, a new set thirty times a second.
-  let row = floor(uv.y * 40.0);
-  let frame = floor(u.time * 30.0);
-  if (hash11(row + frame * 7.0) > 1.0 - g * 0.5) {
-    uv.x += (hash11(row * 3.1 + frame) - 0.5) * 0.14 * g;
-  }
-  // Chromatic aberration, wider toward the edges and in a glitch.
-  let off = (uv - 0.5) * (0.004 + g * 0.03);
-  var c = vec3f(
-    textureSample(scene, samp, uv - off).r,
-    textureSample(scene, samp, uv).g,
-    textureSample(scene, samp, uv + off).b
-  );
-  c += textureSample(bloom, samp, uv).rgb * 0.9;
-  c *= 1.0 - g * 0.12 * (0.5 + 0.5 * sin(in.clip.y * 2.1));
-  let q = in.uv - 0.5;
-  c *= 1.0 - dot(q, q) * 0.7;
-  c = pow(aces(c), vec3f(1.0 / 2.2));
-  let n = fract(sin(dot(in.clip.xy + fract(u.time) * 97.0, vec2f(12.9898, 78.233))) * 43758.5453);
-  return vec4f(c + (n - 0.5) * 0.025, 1.0);
-}
-`;
+const root = document.documentElement;
+const canvas = document.querySelector('canvas.backdrop');
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
 
 function keepStill(reason) {
   root.dataset.backdrop = 'still';
-  console.warn(`brainstrike.ai backdrop: ${reason}; showing the still image.`);
+  root.dataset.backdropReason = reason;
+  console.warn(`brainstrike.ai backdrop: ${reason}; showing the still sky.`);
 }
 
-const smoothstep = (a, b, x) => {
-  const t = Math.min(Math.max((x - a) / (b - a), 0), 1);
-  return t * t * (3 - 2 * t);
-};
-const clamp = (x, a, b) => Math.min(Math.max(x, a), b);
+// --- Small vector helpers -------------------------------------------------
+
 const add = (a, b, k = 1) => [a[0] + b[0] * k, a[1] + b[1] * k, a[2] + b[2] * k];
+const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const scale = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 const length = (a) => Math.hypot(a[0], a[1], a[2]);
 const norm = (a) => scale(a, 1 / (length(a) || 1));
-const mixColor = (a, b, k) => a.map((v, i) => v + (b[i] - v) * k);
+const clamp = (x, a, b) => Math.min(Math.max(x, a), b);
+const smoothstep = (a, b, x) => {
+  const t = clamp((x - a) / (b - a), 0, 1);
+  return t * t * (3 - 2 * t);
+};
 
-async function compile(device, code, label) {
-  const module = device.createShaderModule({ code, label });
-  const errors = (await module.getCompilationInfo()).messages.filter((m) => m.type === 'error');
-  if (errors.length > 0) {
-    throw new Error(`${label}: ${errors.map((m) => `${m.lineNum}:${m.linePos} ${m.message}`).join('; ')}`);
-  }
-  return module;
+// A small seeded random source, so the reduced-motion frame is the same
+// picture every time.
+function random(seed) {
+  let s = seed >>> 0;
+  return () => {
+    s = (s + 0x6d2b79f5) >>> 0;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 }
 
-// A camera on a sphere round the core, looking at it, rolled a little.
-function orbitCamera(yaw, pitch, distance, roll) {
-  const eye = [
-    distance * Math.cos(pitch) * Math.sin(yaw),
-    distance * Math.sin(pitch),
-    distance * Math.cos(pitch) * Math.cos(yaw),
+// --- Shaders --------------------------------------------------------------
+
+// The sky, the checkerboard floor and the studio lights the chrome reflects.
+// Daylight and Night mall are blended by uNight.
+const ENV = /* glsl */ `
+uniform float uNight;
+uniform float uTime;
+const vec3 BLUE = vec3(0.0, 0.0037, 0.73);
+const vec3 VOLT = vec3(0.63, 0.96, 0.0013);
+
+vec3 skyTop() { return mix(vec3(0.0, 0.006, 0.78), vec3(0.0004, 0.0012, 0.06), uNight); }
+vec3 skyZenith() { return mix(vec3(0.0, 0.002, 0.3), vec3(0.0, 0.0004, 0.016), uNight); }
+vec3 haze() { return mix(vec3(0.36, 0.46, 1.0), vec3(0.07, 0.025, 0.4), uNight); }
+vec3 floorFog() { return mix(skyTop(), haze(), 0.45); }
+vec3 sunDir() { return normalize(mix(vec3(-0.45, 0.22, -0.86), vec3(0.5, 0.14, -0.85), uNight)); }
+vec3 sunColor() { return mix(vec3(1.0, 0.94, 0.82), VOLT * 0.9, uNight); }
+// The key light the pipes are lit by, from above the camera's side of the room.
+vec3 keyDir() { return normalize(vec3(0.35, 0.8, 0.5)); }
+vec3 keyColor() { return mix(vec3(1.0, 0.97, 0.92), vec3(0.45, 0.55, 1.0), uNight); }
+
+float checker(vec2 p, vec2 w) {
+  vec2 i = 2.0 * (abs(fract((p - 0.5 * w) * 0.5) - 0.5) - abs(fract((p + 0.5 * w) * 0.5) - 0.5)) / w;
+  return 0.5 - 0.5 * i.x * i.y;
+}
+
+vec3 sky(vec3 d) {
+  float h = d.y;
+  vec3 c = mix(haze(), skyTop(), smoothstep(-0.01, 0.22, h));
+  c = mix(c, skyZenith(), smoothstep(0.35, 1.0, h));
+  float s = max(dot(d, sunDir()), 0.0);
+  c += sunColor() * (pow(s, 1400.0) * 9.0 + pow(s, 14.0) * 0.16);
+  return c;
+}
+
+const float FLOOR_Y = -7.5;
+
+vec3 floorAt(vec3 ro, vec3 rd, float blur) {
+  float t = (FLOOR_Y - ro.y) / rd.y;
+  vec3 p = ro + rd * t;
+  vec2 q = p.xz * 0.25;
+  vec2 w = max(fwidth(q), vec2(0.002)) + blur * t * 0.004;
+  float k = checker(q, w);
+  vec3 day = mix(vec3(0.0, 0.004, 0.42), vec3(0.11, 0.17, 1.0), k);
+  vec3 night = mix(vec3(0.0003, 0.0008, 0.03), vec3(0.002, 0.004, 0.14), k);
+  vec2 g = abs(fract(q + 0.5) - 0.5) / max(w, vec2(0.0001));
+  float line = 1.0 - clamp(min(g.x, g.y) - 0.5, 0.0, 1.0);
+  night += VOLT * line * 0.55;
+  vec3 c = mix(day, night, uNight);
+  return mix(c, floorFog(), 1.0 - exp(-t * 0.022));
+}
+
+vec3 env(vec3 ro, vec3 rd, float blur) {
+  // Both are computed so the floor's derivatives stay in uniform control flow.
+  vec3 ground = floorAt(ro, rd, blur);
+  vec3 c = sky(rd);
+  // two soft boxes, seen only in reflections, for the studio-chrome look
+  float a = smoothstep(0.8, 0.86, dot(rd, normalize(vec3(0.6, 0.75, 0.3))));
+  float b = smoothstep(0.9, 0.94, dot(rd, normalize(vec3(-0.7, 0.55, 0.6))));
+  c += vec3(1.0, 0.98, 0.95) * a * mix(2.2, 0.5, uNight) * blur + mix(vec3(0.6, 0.7, 1.0), VOLT, uNight) * b * 1.2 * blur;
+  return rd.y < -0.002 ? ground : c;
+}
+`;
+
+const CAMERA = /* glsl */ `
+uniform vec3 uEye;
+uniform vec3 uRight;
+uniform vec3 uUp;
+uniform vec3 uFwd;
+uniform vec2 uShift;
+uniform float uFocal;
+uniform float uAspect;
+
+vec4 project(vec3 p) {
+  vec3 v = p - uEye;
+  vec3 c = vec3(dot(v, uRight), dot(v, uUp), dot(v, uFwd));
+  const float n = 0.1;
+  const float f = 160.0;
+  return vec4(c.x * uFocal / uAspect + uShift.x * c.z, c.y * uFocal + uShift.y * c.z, c.z * (f + n) / (f - n) - 2.0 * f * n / (f - n), c.z);
+}
+`;
+
+const BACKGROUND_VS = /* glsl */ `#version 300 es
+out vec2 vNdc;
+void main() {
+  vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2)) * 2.0 - 1.0;
+  vNdc = p;
+  gl_Position = vec4(p, 0.9999, 1.0);
+}`;
+
+const BACKGROUND_FS = /* glsl */ `#version 300 es
+precision highp float;
+in vec2 vNdc;
+out vec4 outColor;
+${CAMERA}
+${ENV}
+void main() {
+  vec2 q = vNdc - uShift;
+  vec3 rd = normalize(uFwd + uRight * q.x * uAspect / uFocal + uUp * q.y / uFocal);
+  outColor = vec4(env(uEye, rd, 0.0), 1.0);
+}`;
+
+const PIPE_VS = /* glsl */ `#version 300 es
+layout(location = 0) in vec3 aPos;
+layout(location = 1) in vec3 aNormal;
+layout(location = 2) in vec3 iA;
+layout(location = 3) in vec3 iB;
+layout(location = 4) in vec4 iInfo; // radius, material, born, pipe
+uniform int uKind; // 0 segment, 1 joint
+uniform float uTime;
+uniform float uStep;
+uniform float uGrabPipe;
+uniform vec3 uGrabAt;
+uniform vec3 uGrabOffset;
+uniform float uRingPipe;
+uniform float uRingAge;
+uniform float uDissolve;
+uniform vec3 uDissolveFrom;
+${CAMERA}
+out vec3 vWorld;
+out vec3 vNormal;
+out float vGlow;
+flat out float vMaterial;
+
+void main() {
+  float age = (uTime - iInfo.z) / uStep;
+  float grow = 1.0 - pow(1.0 - clamp(age, 0.0, 1.0), 3.0);
+  vec3 center = uKind == 0 ? mix(iA, iB, 0.5) : iA;
+  float fade = 1.0 - smoothstep(0.0, 0.55, uDissolve - distance(center, uDissolveFrom) * 0.07);
+  float r = iInfo.x * fade;
+  vec3 p;
+  vec3 n;
+  if (uKind == 0) {
+    vec3 axis = iB - iA;
+    float len = length(axis);
+    vec3 w = axis / len;
+    vec3 t = abs(w.y) < 0.99 ? normalize(cross(w, vec3(0.0, 1.0, 0.0))) : vec3(1.0, 0.0, 0.0);
+    vec3 b = cross(w, t);
+    p = iA + w * (aPos.y * len * grow) + (t * aPos.x + b * aPos.z) * r;
+    n = t * aNormal.x + b * aNormal.z;
+  } else {
+    float pop = age < 1.0 ? grow * (1.0 + 0.55 * sin(grow * 3.14159)) : 1.0;
+    p = iA + aPos * r * max(pop, 0.0);
+    n = aNormal;
+  }
+  bool ringing = abs(iInfo.w - uRingPipe) < 0.5;
+  if (ringing) {
+    float k = exp(-uRingAge * 2.6);
+    p += n * sin(uRingAge * 34.0 - dot(p, vec3(1.3, 1.7, 1.1)) * 2.4) * 0.07 * k;
+  }
+  if (abs(iInfo.w - uGrabPipe) < 0.5) {
+    float d = distance(p, uGrabAt);
+    p += uGrabOffset * exp(-d * d / 4.5);
+  }
+  vWorld = p;
+  vNormal = n;
+  vMaterial = iInfo.y;
+  // Rung pipes flash, dissolving ones flare as they go, and a new cell glows
+  // for a beat.
+  vGlow = (ringing ? exp(-uRingAge * 3.0) * 1.4 : 0.0) + (1.0 - fade) * fade * 6.0 + (1.0 - clamp(age - 1.0, 0.0, 1.0)) * 0.35 * step(0.0, age);
+  gl_Position = project(p);
+}`;
+
+const PIPE_FS = /* glsl */ `#version 300 es
+precision highp float;
+in vec3 vWorld;
+in vec3 vNormal;
+in float vGlow;
+flat in float vMaterial;
+out vec4 outColor;
+${CAMERA}
+${ENV}
+void main() {
+  vec3 n = normalize(vNormal);
+  vec3 v = normalize(uEye - vWorld);
+  if (dot(n, v) < 0.0) {
+    n = -n;
+  }
+  vec3 r = reflect(-v, n);
+  float nv = max(dot(n, v), 0.0);
+  float fres = pow(1.0 - nv, 5.0);
+  vec3 refl = env(vWorld, r, 1.0);
+  vec3 l = keyDir();
+  float diffuse = max(dot(n, l), 0.0);
+  vec3 ambient = mix(mix(vec3(0.05, 0.06, 0.3), vec3(0.003, 0.003, 0.06), uNight), skyTop() * 0.9 + 0.08, 0.5 + 0.5 * n.y);
+  int m = int(vMaterial + 0.5);
+  vec3 c;
+  if (m == 0) {
+    c = refl * vec3(0.92, 0.95, 1.0);
+  } else if (m == 1) {
+    c = VOLT * (0.12 + ambient * 0.5 + diffuse * keyColor() * 0.8) + refl * mix(0.05, 1.0, fres) * 0.7;
+  } else if (m == 2) {
+    vec3 film = 0.5 + 0.5 * cos(6.2831 * (vec3(0.0, 0.33, 0.67) + nv * 1.3 + 0.15));
+    c = film * 0.5 * (ambient + diffuse * 0.6) + refl * mix(0.1, 1.0, fres);
+  } else if (m == 3) {
+    c = BLUE * (ambient * 0.5 + diffuse * 0.35) + refl * mix(0.12, 1.0, fres) * 0.8;
+  } else {
+    c = vec3(0.86, 0.88, 0.92) * (ambient * 0.7 + diffuse * keyColor() * 0.6) + refl * mix(0.04, 1.0, fres) * 0.45;
+  }
+  vec3 h = normalize(l + v);
+  c += keyColor() * pow(max(dot(n, h), 0.0), 260.0) * (m == 0 ? 2.5 : 1.4);
+  c += mix(vec3(0.7, 0.8, 1.0), VOLT, 0.5 + 0.5 * uNight) * vGlow;
+  float dist = length(uEye - vWorld);
+  c = mix(c, floorFog(), 1.0 - exp(-max(dist - 16.0, 0.0) * 0.035));
+  outColor = vec4(c, 1.0);
+}`;
+
+// Mystify: two four-cornered shapes bouncing round the sky, with trails.
+const RIBBON_VS = /* glsl */ `#version 300 es
+layout(location = 0) in vec2 aPos;
+layout(location = 1) in vec3 aInfo; // across (-1..1), fade, shape
+out vec3 vInfo;
+void main() {
+  vInfo = aInfo;
+  gl_Position = vec4(aPos, 0.9998, 1.0);
+}`;
+
+const RIBBON_FS = /* glsl */ `#version 300 es
+precision highp float;
+in vec3 vInfo;
+uniform float uNight;
+out vec4 outColor;
+void main() {
+  float edge = exp(-vInfo.x * vInfo.x * 3.5);
+  vec3 a = mix(vec3(0.9, 0.95, 1.0), vec3(0.63, 0.96, 0.0013), uNight);
+  vec3 b = mix(vec3(0.63, 0.96, 0.0013), vec3(0.4, 0.5, 1.0), uNight);
+  vec3 c = vInfo.z < 0.5 ? a : b;
+  outColor = vec4(c * edge * vInfo.y * mix(0.35, 0.6, uNight), 1.0);
+}`;
+
+const FULLSCREEN_VS = /* glsl */ `#version 300 es
+out vec2 vUv;
+void main() {
+  vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
+  vUv = p;
+  gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+}`;
+
+// Bright parts only, at a quarter of the size, for the bloom.
+const BRIGHT_FS = /* glsl */ `#version 300 es
+precision highp float;
+in vec2 vUv;
+uniform sampler2D uSource;
+uniform vec2 uTexel;
+out vec4 outColor;
+void main() {
+  vec3 c = vec3(0.0);
+  for (int y = -1; y <= 1; y++) {
+    for (int x = -1; x <= 1; x++) {
+      c += texture(uSource, vUv + vec2(x, y) * uTexel).rgb;
+    }
+  }
+  c /= 9.0;
+  outColor = vec4(max(c - 0.75, 0.0), 1.0);
+}`;
+
+const BLUR_FS = /* glsl */ `#version 300 es
+precision highp float;
+in vec2 vUv;
+uniform sampler2D uSource;
+uniform vec2 uDirection;
+out vec4 outColor;
+void main() {
+  const float w[5] = float[](0.227, 0.194, 0.122, 0.054, 0.016);
+  vec3 c = texture(uSource, vUv).rgb * w[0];
+  for (int i = 1; i < 5; i++) {
+    c += texture(uSource, vUv + uDirection * float(i)).rgb * w[i];
+    c += texture(uSource, vUv - uDirection * float(i)).rgb * w[i];
+  }
+  outColor = vec4(c, 1.0);
+}`;
+
+// Tone mapping, bloom, a little lens, tape wobble at night and a dither.
+// While the pipes dissolve the picture drops to the web-safe palette.
+const COMPOSITE_FS = /* glsl */ `#version 300 es
+precision highp float;
+in vec2 vUv;
+uniform sampler2D uScene;
+uniform sampler2D uBloom;
+uniform float uTime;
+uniform float uNight;
+uniform float uGlitch;
+uniform float uPalette;
+uniform float uExposure;
+out vec4 outColor;
+
+vec3 aces(vec3 x) {
+  return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
+}
+
+// ACES on luminance only, so the link blue keeps its saturation; colours
+// brighter than the screen roll toward white instead of clipping.
+vec3 tonemap(vec3 c) {
+  float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+  vec3 t = c * (aces(vec3(l)).x / max(l, 1e-5));
+  float m = max(t.r, max(t.g, t.b));
+  return m > 1.0 ? mix(t / m, vec3(1.0), clamp((m - 1.0) * 0.35, 0.0, 1.0)) : t;
+}
+
+float bayer(vec2 p) {
+  ivec2 i = ivec2(mod(p, 4.0));
+  int m[16] = int[](0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5);
+  return float(m[i.y * 4 + i.x]) / 16.0 - 0.5;
+}
+
+void main() {
+  vec2 uv = vUv;
+  float row = floor(uv.y * 180.0);
+  float tear = fract(sin(row * 12.9898 + floor(uTime * 24.0) * 78.233) * 43758.5453);
+  uv.x += sin(uv.y * 30.0 + uTime * 2.3) * 0.0015 * uNight + (tear - 0.5) * 0.04 * step(0.85, tear) * uGlitch;
+  vec2 d = (uv - 0.5) * 0.0025;
+  vec3 c = vec3(texture(uScene, uv + d).r, texture(uScene, uv).g, texture(uScene, uv - d).b);
+  c += texture(uBloom, uv).rgb * 0.8;
+  c = tonemap(c * uExposure);
+  c = pow(c, vec3(1.0 / 2.2));
+  vec2 q = vUv - 0.5;
+  c *= 1.0 - dot(q, q) * 0.55;
+  c *= 1.0 - uNight * 0.05 * (0.5 + 0.5 * sin(gl_FragCoord.y * 3.14159));
+  float b = bayer(gl_FragCoord.xy);
+  vec3 safe = floor(c * 5.0 + 0.5 + b) / 5.0;
+  c = mix(c + b / 255.0 * 1.5, safe, uPalette);
+  outColor = vec4(c, 1.0);
+}`;
+
+// --- Meshes ---------------------------------------------------------------
+
+// An open tube along +Y from 0 to 1, radius 1, in rings so it can bend.
+function tube(sides, rings) {
+  const positions = [];
+  const normals = [];
+  const indices = [];
+  for (let ring = 0; ring <= rings; ring += 1) {
+    for (let side = 0; side < sides; side += 1) {
+      const a = (side / sides) * Math.PI * 2;
+      positions.push(Math.cos(a), ring / rings, Math.sin(a));
+      normals.push(Math.cos(a), 0, Math.sin(a));
+    }
+  }
+  for (let ring = 0; ring < rings; ring += 1) {
+    for (let side = 0; side < sides; side += 1) {
+      const a = ring * sides + side;
+      const b = ring * sides + ((side + 1) % sides);
+      indices.push(a, a + sides, b, b, a + sides, b + sides);
+    }
+  }
+  return { indices: new Uint16Array(indices), normals: new Float32Array(normals), positions: new Float32Array(positions) };
+}
+
+function ball(columns, rows) {
+  const positions = [];
+  const indices = [];
+  for (let row = 0; row <= rows; row += 1) {
+    const v = (row / rows) * Math.PI;
+    for (let column = 0; column <= columns; column += 1) {
+      const u = (column / columns) * Math.PI * 2;
+      positions.push(Math.sin(v) * Math.cos(u), Math.cos(v), Math.sin(v) * Math.sin(u));
+    }
+  }
+  for (let row = 0; row < rows; row += 1) {
+    for (let column = 0; column < columns; column += 1) {
+      const a = row * (columns + 1) + column;
+      const b = a + columns + 1;
+      indices.push(a, b, a + 1, a + 1, b, b + 1);
+    }
+  }
+  const p = new Float32Array(positions);
+  return { indices: new Uint16Array(indices), normals: p, positions: p };
+}
+
+// --- The pipes ------------------------------------------------------------
+
+// The growing pipes, independent of the GL context: a context restore keeps
+// them. Times are scene seconds.
+function createPipes(rand) {
+  const segments = []; // { a, b, radius, material, born, pipe }
+  const joints = []; // { at, radius, material, born, pipe }
+  const occupied = new Set();
+  let pipes = [];
+  let nextId = 1;
+  let version = 0;
+  const key = (c) => `${c[0]},${c[1]},${c[2]}`;
+  const inside = (c) => Math.abs(c[0]) <= BOX[0] && Math.abs(c[1]) <= BOX[1] && Math.abs(c[2]) <= BOX[2];
+  const free = (c) => inside(c) && !occupied.has(key(c));
+  const DIRECTIONS = [
+    [1, 0, 0],
+    [-1, 0, 0],
+    [0, 1, 0],
+    [0, -1, 0],
+    [0, 0, 1],
+    [0, 0, -1],
   ];
+  const MATERIALS = [0, 0, 1, 1, 1, 2, 3, 4];
+
+  function start(cell, born) {
+    if (!free(cell) || segments.length >= MAX_SEGMENTS - 4) {
+      return null;
+    }
+    const pipe = {
+      cell,
+      direction: DIRECTIONS[Math.floor(rand() * 6)],
+      id: nextId,
+      length: 0,
+      material: MATERIALS[Math.floor(rand() * MATERIALS.length)],
+    };
+    nextId += 1;
+    occupied.add(key(cell));
+    joints.push({ at: cell, born, material: pipe.material, pipe: pipe.id, radius: JOINT_RADIUS });
+    pipes.push(pipe);
+    version += 1;
+    return pipe;
+  }
+
+  function randomCell() {
+    for (let tries = 0; tries < 30; tries += 1) {
+      const c = BOX.map((h) => Math.floor(rand() * (h * 2 + 1)) - h);
+      if (free(c)) {
+        return c;
+      }
+    }
+    return null;
+  }
+
+  // One beat: every growing pipe moves a cell, mostly straight on. Returns
+  // the turns taken, for the music.
+  function step(born) {
+    const turns = [];
+    for (const pipe of pipes) {
+      const ahead = add(pipe.cell, pipe.direction);
+      let direction = pipe.direction;
+      if (!(free(ahead) && rand() < 0.7)) {
+        const options = DIRECTIONS.filter((d) => dot(d, pipe.direction) === 0 && free(add(pipe.cell, d)));
+        direction = options.length > 0 ? options[Math.floor(rand() * options.length)] : free(ahead) ? pipe.direction : null;
+      }
+      if (!direction || pipe.length >= PIPE_LIFE || segments.length >= MAX_SEGMENTS || joints.length >= MAX_JOINTS - 2) {
+        joints.push({ at: pipe.cell, born, material: pipe.material, pipe: pipe.id, radius: JOINT_RADIUS });
+        pipe.done = true;
+        continue;
+      }
+      if (direction !== pipe.direction && pipe.length > 0) {
+        joints.push({ at: pipe.cell, born, material: pipe.material, pipe: pipe.id, radius: JOINT_RADIUS });
+        turns.push(pipe);
+      }
+      const next = add(pipe.cell, direction);
+      segments.push({ a: pipe.cell, b: next, born, material: pipe.material, pipe: pipe.id, radius: PIPE_RADIUS });
+      occupied.add(key(next));
+      pipe.cell = next;
+      pipe.direction = direction;
+      pipe.length += 1;
+    }
+    pipes = pipes.filter((pipe) => !pipe.done);
+    version += 1;
+    return turns;
+  }
+
+  function clear() {
+    segments.length = 0;
+    joints.length = 0;
+    occupied.clear();
+    pipes = [];
+    version += 1;
+  }
+
+  return {
+    clear,
+    get growing() {
+      return pipes.length;
+    },
+    joints,
+    randomCell,
+    segments,
+    start,
+    step,
+    get version() {
+      return version;
+    },
+  };
+}
+
+// The nearest pipe a ray hits, as { pipe, at, t }, or null. Pipes count as a
+// little fatter than they are, so they are easy to catch.
+function pick(pipes, ro, rd) {
+  let best = null;
+  const consider = (t, pipe, at) => {
+    if (t > 0 && (!best || t < best.t)) {
+      best = { at, pipe, t };
+    }
+  };
+  for (const s of pipes.segments) {
+    const ab = sub(s.b, s.a);
+    const ao = sub(ro, s.a);
+    const abab = dot(ab, ab);
+    const abrd = dot(ab, rd);
+    const denominator = abab - abrd * abrd;
+    if (denominator < 1e-6) {
+      continue;
+    }
+    const t = (dot(ab, ao) * abrd - abab * dot(ao, rd)) / denominator;
+    const k = clamp((dot(ab, ao) + abrd * t) / abab, 0, 1);
+    const onPipe = add(s.a, ab, k);
+    const onRay = add(ro, rd, t);
+    if (length(sub(onPipe, onRay)) < PIPE_RADIUS * 2.2) {
+      consider(t, s.pipe, onPipe);
+    }
+  }
+  for (const j of pipes.joints) {
+    const oc = sub(ro, j.at);
+    const b = dot(oc, rd);
+    const c = dot(oc, oc) - (j.radius * 1.6) ** 2;
+    const h = b * b - c;
+    if (h > 0) {
+      consider(-b - Math.sqrt(h), j.pipe, j.at);
+    }
+  }
+  return best;
+}
+
+// --- Camera ---------------------------------------------------------------
+
+function orbitCamera(yaw, pitch, distance) {
+  const eye = [distance * Math.cos(pitch) * Math.sin(yaw), distance * Math.sin(pitch), distance * Math.cos(pitch) * Math.cos(yaw)];
   const fwd = norm(scale(eye, -1));
   const right = norm(cross(fwd, [0, 1, 0]));
   const up = cross(right, fwd);
-  const c = Math.cos(roll);
-  const s = Math.sin(roll);
-  return { eye, fwd, right: add(scale(right, c), up, s), up: add(scale(up, c), right, -s) };
+  return { eye, fwd, right, up };
 }
 
-// Lightning between two points: a jagged line of nine points.
-function lightning(from, to) {
-  const span = length(add(to, from, -1));
-  const points = [];
-  for (let i = 0; i <= 8; i += 1) {
-    const k = i / 8;
-    const jitter = i === 0 || i === 8 ? 0 : span * 0.09;
-    const wobble = [Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5];
-    points.push(add(add(scale(from, 1 - k), to, k), wobble, jitter));
+// --- GL -------------------------------------------------------------------
+
+function compile(gl, vertex, fragment, label) {
+  const program = gl.createProgram();
+  for (const [type, source] of [
+    [gl.VERTEX_SHADER, vertex],
+    [gl.FRAGMENT_SHADER, fragment],
+  ]) {
+    const shader = gl.createShader(type);
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+    gl.attachShader(program, shader);
   }
-  return points;
+  gl.linkProgram(program);
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS) && !gl.isContextLost()) {
+    const logs = gl
+      .getAttachedShaders(program)
+      .map((s) => gl.getShaderInfoLog(s))
+      .filter(Boolean)
+      .join(' ');
+    throw new Error(`${label}: ${logs || gl.getProgramInfoLog(program)}`);
+  }
+  const locations = new Map();
+  const at = (name) => {
+    if (!locations.has(name)) {
+      locations.set(name, gl.getUniformLocation(program, name));
+    }
+    return locations.get(name);
+  };
+  return { at, program };
 }
 
-// Lightning flickers: three quick flashes over a fading afterglow.
-const flicker = (age) => {
-  if (age < 0 || age > 0.9) {
-    return 0;
+// Every GL object, made from scratch on start and again after a lost
+// context is restored.
+function createRenderer(gl) {
+  const floatTargets = Boolean(gl.getExtension('EXT_color_buffer_float'));
+  const programs = {
+    background: compile(gl, BACKGROUND_VS, BACKGROUND_FS, 'background'),
+    blur: compile(gl, FULLSCREEN_VS, BLUR_FS, 'blur'),
+    bright: compile(gl, FULLSCREEN_VS, BRIGHT_FS, 'bright'),
+    composite: compile(gl, FULLSCREEN_VS, COMPOSITE_FS, 'composite'),
+    pipe: compile(gl, PIPE_VS, PIPE_FS, 'pipe'),
+    ribbon: compile(gl, RIBBON_VS, RIBBON_FS, 'ribbon'),
+  };
+
+  function mesh(shape, instanceFloats, capacity) {
+    const vao = gl.createVertexArray();
+    gl.bindVertexArray(vao);
+    const positions = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, positions);
+    gl.bufferData(gl.ARRAY_BUFFER, shape.positions, gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
+    const normals = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, normals);
+    gl.bufferData(gl.ARRAY_BUFFER, shape.normals, gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(1);
+    gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 0, 0);
+    const instances = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, instances);
+    gl.bufferData(gl.ARRAY_BUFFER, capacity * instanceFloats * 4, gl.DYNAMIC_DRAW);
+    const stride = instanceFloats * 4;
+    for (const [location, size, offset] of [
+      [2, 3, 0],
+      [3, 3, 12],
+      [4, 4, 24],
+    ]) {
+      gl.enableVertexAttribArray(location);
+      gl.vertexAttribPointer(location, size, gl.FLOAT, false, stride, offset);
+      gl.vertexAttribDivisor(location, 1);
+    }
+    const elements = gl.createBuffer();
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, elements);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, shape.indices, gl.STATIC_DRAW);
+    gl.bindVertexArray(null);
+    return { count: shape.indices.length, data: new Float32Array(capacity * instanceFloats), instances, vao };
   }
-  let v = 0.3 * Math.exp(-age / 0.25);
-  for (const at of [0, 0.06, 0.16]) {
-    if (age >= at) {
-      v += Math.exp(-(age - at) / 0.04);
+
+  const segmentMesh = mesh(tube(20, 10), 10, MAX_SEGMENTS);
+  const jointMesh = mesh(ball(20, 14), 10, MAX_JOINTS);
+
+  const ribbonVao = gl.createVertexArray();
+  gl.bindVertexArray(ribbonVao);
+  const ribbonBuffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, ribbonBuffer);
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 20, 0);
+  gl.enableVertexAttribArray(1);
+  gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 20, 8);
+  gl.bindVertexArray(null);
+  const emptyVao = gl.createVertexArray();
+
+  let targets = null;
+  let width = 1;
+  let height = 1;
+
+  function texture(w, h) {
+    const t = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.texStorage2D(gl.TEXTURE_2D, 1, floatTargets ? gl.RGBA16F : gl.RGBA8, w, h);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    const fb = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0);
+    return { fb, h, t, w };
+  }
+
+  function resize(w, h) {
+    if (targets) {
+      for (const target of [targets.scene, targets.bloomA, targets.bloomB]) {
+        gl.deleteTexture(target.t);
+        gl.deleteFramebuffer(target.fb);
+      }
+      gl.deleteRenderbuffer(targets.color);
+      gl.deleteRenderbuffer(targets.depth);
+      gl.deleteFramebuffer(targets.msaa);
+    }
+    width = w;
+    height = h;
+    const samples = Math.min(4, gl.getParameter(gl.MAX_SAMPLES));
+    const msaa = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, msaa);
+    const color = gl.createRenderbuffer();
+    gl.bindRenderbuffer(gl.RENDERBUFFER, color);
+    gl.renderbufferStorageMultisample(gl.RENDERBUFFER, samples, floatTargets ? gl.RGBA16F : gl.RGBA8, w, h);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.RENDERBUFFER, color);
+    const depth = gl.createRenderbuffer();
+    gl.bindRenderbuffer(gl.RENDERBUFFER, depth);
+    gl.renderbufferStorageMultisample(gl.RENDERBUFFER, samples, gl.DEPTH_COMPONENT24, w, h);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, depth);
+    const bw = Math.max(1, Math.floor(w / 4));
+    const bh = Math.max(1, Math.floor(h / 4));
+    targets = { bloomA: texture(bw, bh), bloomB: texture(bw, bh), color, depth, msaa, scene: texture(w, h) };
+  }
+
+  function upload(target, items, kind) {
+    const { data } = target;
+    let i = 0;
+    for (const item of items) {
+      const a = kind === 0 ? item.a : item.at;
+      const b = kind === 0 ? item.b : item.at;
+      data.set([a[0], a[1], a[2], b[0], b[1], b[2], item.radius, item.material, item.born, item.pipe], i);
+      i += 10;
+    }
+    gl.bindBuffer(gl.ARRAY_BUFFER, target.instances);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, data, 0, i);
+    target.used = items.length;
+  }
+
+  function setCamera(p, view) {
+    gl.uniform3fv(p.at('uEye'), view.camera.eye);
+    gl.uniform3fv(p.at('uRight'), view.camera.right);
+    gl.uniform3fv(p.at('uUp'), view.camera.up);
+    gl.uniform3fv(p.at('uFwd'), view.camera.fwd);
+    gl.uniform2fv(p.at('uShift'), view.shift);
+    gl.uniform1f(p.at('uFocal'), FOCAL);
+    gl.uniform1f(p.at('uAspect'), view.aspect);
+    gl.uniform1f(p.at('uNight'), view.night);
+    gl.uniform1f(p.at('uTime'), view.time);
+  }
+
+  function fullscreen(p, target, inputs) {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, target ? target.fb : null);
+    gl.viewport(0, 0, target ? target.w : gl.drawingBufferWidth, target ? target.h : gl.drawingBufferHeight);
+    gl.useProgram(p.program);
+    inputs.forEach(([name, tex], unit) => {
+      gl.activeTexture(gl.TEXTURE0 + unit);
+      gl.bindTexture(gl.TEXTURE_2D, tex.t);
+      gl.uniform1i(p.at(name), unit);
+    });
+    gl.bindVertexArray(emptyVao);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+
+  function draw(view, pipes, ribbons) {
+    const { background, blur, bright, composite, pipe, ribbon } = programs;
+    if (segmentMesh.version !== pipes.version) {
+      upload(segmentMesh, pipes.segments, 0);
+      upload(jointMesh, pipes.joints, 1);
+      segmentMesh.version = pipes.version;
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, targets.msaa);
+    gl.viewport(0, 0, width, height);
+    gl.disable(gl.BLEND);
+    gl.disable(gl.DEPTH_TEST);
+    gl.depthMask(false);
+    gl.useProgram(background.program);
+    setCamera(background, view);
+    gl.bindVertexArray(emptyVao);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE);
+    gl.useProgram(ribbon.program);
+    gl.uniform1f(ribbon.at('uNight'), view.night);
+    gl.bindVertexArray(ribbonVao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, ribbonBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, ribbons, gl.STREAM_DRAW);
+    gl.drawArrays(gl.TRIANGLES, 0, ribbons.length / 5);
+    gl.disable(gl.BLEND);
+
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthMask(true);
+    gl.clear(gl.DEPTH_BUFFER_BIT);
+    gl.useProgram(pipe.program);
+    setCamera(pipe, view);
+    gl.uniform1f(pipe.at('uStep'), BEAT * 0.9);
+    gl.uniform1f(pipe.at('uGrabPipe'), view.grab.pipe);
+    gl.uniform3fv(pipe.at('uGrabAt'), view.grab.at);
+    gl.uniform3fv(pipe.at('uGrabOffset'), view.grab.offset);
+    gl.uniform1f(pipe.at('uRingPipe'), view.ring.pipe);
+    gl.uniform1f(pipe.at('uRingAge'), view.ring.age);
+    gl.uniform1f(pipe.at('uDissolve'), view.dissolve.age);
+    gl.uniform3fv(pipe.at('uDissolveFrom'), view.dissolve.from);
+    for (const [kind, m] of [
+      [0, segmentMesh],
+      [1, jointMesh],
+    ]) {
+      if (m.used > 0) {
+        gl.uniform1i(pipe.at('uKind'), kind);
+        gl.bindVertexArray(m.vao);
+        gl.drawElementsInstanced(gl.TRIANGLES, m.count, gl.UNSIGNED_SHORT, 0, m.used);
+      }
+    }
+    gl.disable(gl.DEPTH_TEST);
+
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, targets.msaa);
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, targets.scene.fb);
+    gl.blitFramebuffer(0, 0, width, height, 0, 0, width, height, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+
+    const { bloomA, bloomB, scene } = targets;
+    gl.useProgram(bright.program);
+    gl.uniform2f(bright.at('uTexel'), 1 / width, 1 / height);
+    fullscreen(bright, bloomA, [['uSource', scene]]);
+    gl.useProgram(blur.program);
+    gl.uniform2f(blur.at('uDirection'), 1.5 / bloomA.w, 0);
+    fullscreen(blur, bloomB, [['uSource', bloomA]]);
+    gl.uniform2f(blur.at('uDirection'), 0, 1.5 / bloomA.h);
+    fullscreen(blur, bloomA, [['uSource', bloomB]]);
+
+    gl.useProgram(composite.program);
+    gl.uniform1f(composite.at('uTime'), view.time);
+    gl.uniform1f(composite.at('uNight'), view.night);
+    gl.uniform1f(composite.at('uGlitch'), view.glitch);
+    gl.uniform1f(composite.at('uPalette'), view.palette);
+    gl.uniform1f(composite.at('uExposure'), view.exposure);
+    fullscreen(composite, null, [
+      ['uScene', scene],
+      ['uBloom', bloomA],
+    ]);
+  }
+
+  return { draw, resize };
+}
+
+// --- Mystify --------------------------------------------------------------
+
+// Two shapes of four corners bounce round the part of the screen beside the
+// copy (`bounds`, in NDC: x0, x1, y0, y1); each keeps a trail of where it
+// was. Returns the triangles to draw, as x, y, across, fade, shape.
+function createRibbons(rand) {
+  const TRAIL = 9;
+  const bounds = [0, 0.98, -0.2, 0.92];
+  const shapes = [0, 1].map(() => ({
+    corners: Array.from({ length: 4 }, () => ({
+      p: [0.1 + rand() * 0.8, rand() * 1.1 - 0.2],
+      v: [(rand() * 0.5 + 0.18) * (rand() < 0.5 ? -1 : 1), (rand() * 0.5 + 0.18) * (rand() < 0.5 ? -1 : 1)],
+    })),
+    trail: [],
+  }));
+  let since = 0;
+  const out = new Float32Array(2 * TRAIL * 4 * 6 * 5);
+
+  function step(dt) {
+    for (const shape of shapes) {
+      for (const corner of shape.corners) {
+        for (const i of [0, 1]) {
+          const lo = bounds[i * 2];
+          const hi = bounds[i * 2 + 1];
+          corner.p[i] += corner.v[i] * dt * 0.22;
+          if (corner.p[i] < lo || corner.p[i] > hi) {
+            corner.p[i] = clamp(corner.p[i], lo, hi);
+            corner.v[i] = Math.abs(corner.v[i]) * (corner.p[i] === lo ? 1 : -1);
+          }
+        }
+      }
+    }
+    since += dt;
+    if (since > 0.07) {
+      since = 0;
+      for (const shape of shapes) {
+        shape.trail.unshift(shape.corners.map((c) => [...c.p]));
+        shape.trail.length = Math.min(shape.trail.length, TRAIL);
+      }
     }
   }
-  return v;
-};
 
-async function start() {
+  function triangles(aspect, pixel) {
+    let i = 0;
+    const w = pixel * 2.2;
+    shapes.forEach((shape, s) => {
+      shape.trail.forEach((corners, k) => {
+        const fade = (1 - k / TRAIL) ** 1.6;
+        for (let e = 0; e < 4; e += 1) {
+          const a = corners[e];
+          const b = corners[(e + 1) % 4];
+          const dx = (b[0] - a[0]) * aspect;
+          const dy = b[1] - a[1];
+          const l = Math.hypot(dx, dy) || 1;
+          const nx = (-dy / l) * w / aspect;
+          const ny = (dx / l) * w;
+          const quad = [
+            [a[0] - nx, a[1] - ny, -1],
+            [a[0] + nx, a[1] + ny, 1],
+            [b[0] - nx, b[1] - ny, -1],
+            [b[0] - nx, b[1] - ny, -1],
+            [a[0] + nx, a[1] + ny, 1],
+            [b[0] + nx, b[1] + ny, 1],
+          ];
+          for (const [x, y, across] of quad) {
+            out.set([x, y, across, fade, s], i);
+            i += 5;
+          }
+        }
+      });
+    });
+    return out.subarray(0, i);
+  }
+
+  return { bounds, step, triangles };
+}
+
+// --- The scene ------------------------------------------------------------
+
+function start() {
   if (!canvas) {
     return;
   }
-  if (!navigator.gpu) {
-    keepStill('this browser has no WebGPU');
+  const gl = canvas.getContext('webgl2', { alpha: false, antialias: false, depth: false, powerPreference: 'high-performance' });
+  if (!gl) {
+    keepStill('this browser has no WebGL2');
     return;
   }
-  const adapter = await navigator.gpu.requestAdapter();
-  if (!adapter) {
-    keepStill('no WebGPU adapter is available');
-    return;
-  }
-  const device = await adapter.requestDevice();
-  let raf = 0;
-  const synth = createSynth(BPM);
-  device.lost.then((info) => {
-    if (info.reason !== 'destroyed') {
-      cancelAnimationFrame(raf);
-      raf = 0;
-      synth.stop();
-      keepStill(`the GPU device was lost (${info.message})`);
-    }
-  });
-  device.addEventListener('uncapturederror', (event) => {
-    console.error('brainstrike.ai backdrop:', event.error.message);
-  });
 
-  const context = canvas.getContext('webgpu');
-  const format = navigator.gpu.getPreferredCanvasFormat();
-  context.configure({ alphaMode: 'opaque', device, format });
+  const still = reducedMotion.matches;
+  const rand = random(still ? 7 : (Date.now() ^ (Math.random() * 1e9)) >>> 0);
+  const pipes = createPipes(rand);
+  const ribbons = createRibbons(rand);
+  const synth = createSynth(BPM);
+  let renderer = null;
 
   const small = matchMedia('(pointer: coarse)').matches || Math.min(innerWidth, innerHeight) < 700;
-  // The scene renders at a share of the canvas, which steps down if the GPU
-  // cannot keep up; the composite pass scales it up.
-  let renderScale = small ? 0.42 : 0.55;
-  const steps = small ? 80 : 110;
-
-  const f32 = new Float32Array(UNIFORM_FLOATS);
-  const uniforms = device.createBuffer({ size: f32.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-  const [sceneModule, blurModule, compositeModule] = await Promise.all([
-    compile(device, SCENE, 'scene'),
-    compile(device, BLUR, 'bloom'),
-    compile(device, COMPOSITE, 'composite'),
-  ]);
-  const HDR = 'rgba16float';
-  const pipeline = (module, entryPoint, targetFormat) =>
-    device.createRenderPipelineAsync({
-      fragment: { entryPoint, module, targets: [{ format: targetFormat }] },
-      layout: 'auto',
-      vertex: { entryPoint: 'vs', module },
-    });
-  const [scenePipeline, downPipeline, blurPipeline, compositePipeline] = await Promise.all([
-    pipeline(sceneModule, 'march', HDR),
-    pipeline(blurModule, 'down', HDR),
-    pipeline(blurModule, 'blur', HDR),
-    pipeline(compositeModule, 'fs', format),
-  ]);
-  const sceneGroup = device.createBindGroup({
-    entries: [{ binding: 0, resource: { buffer: uniforms } }],
-    layout: scenePipeline.getBindGroupLayout(0),
-  });
-  const sampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
-  const passUniforms = [0, 1, 2].map(() =>
-    device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
-  );
-
-  let width = 0;
-  let height = 0;
+  let renderScale = small ? 0.8 : 1;
+  let width = 1;
+  let height = 1;
   let aspect = 1;
-  let textures = [];
-  let views = null;
-  // Where the core sits on screen, in NDC: right of the copy on a wide
-  // screen, above it on a narrow one.
-  let coreAt = [0.42, 0.02];
+  let shift = [0, 0];
+
+  // The camera drifts round the pipes on its own; dragging spins it, with
+  // momentum, and it eases back to drifting.
+  // A narrow screen stands further back, so the pipes fit above the copy.
+  const away = innerWidth <= 760 ? 30 : 18;
+  const orbit = { distance: away, pitch: 0.12, spin: 0, tilt: 0, yaw: 0.6, zoom: away };
+  const grab = { at: [0, 0, 0], held: false, offset: [0, 0, 0], pipe: -1, plane: null, velocity: [0, 0, 0] };
+  const ring = { age: 99, pipe: -1 };
+  const dissolve = { age: 0, from: [0, 0, 0] };
+  const state = { glitch: 0, nextStep: 0, section: -1 };
+  let elapsed = 0;
 
   function layout() {
     const dpr = Math.min(devicePixelRatio || 1, DPR_CAP);
-    width = Math.max(1, Math.round(canvas.clientWidth * dpr));
-    height = Math.max(1, Math.round(canvas.clientHeight * dpr));
-    aspect = canvas.clientWidth / canvas.clientHeight;
+    width = Math.max(1, Math.round(canvas.clientWidth * dpr * renderScale));
+    height = Math.max(1, Math.round(canvas.clientHeight * dpr * renderScale));
+    aspect = canvas.clientWidth / Math.max(1, canvas.clientHeight);
     canvas.width = width;
     canvas.height = height;
-    coreAt = innerWidth <= 760 ? [0, 0.42] : [0.42, 0.02];
-    for (const texture of textures) {
-      texture.destroy();
+    // The pipes sit right of the copy on a wide screen and above it on a phone.
+    shift = innerWidth <= 760 ? [0, 0.42] : [0.38, 0.02];
+    ribbons.bounds.splice(0, 4, ...(innerWidth <= 760 ? [-0.95, 0.95, 0.15, 0.95] : [0, 0.98, -0.25, 0.92]));
+    renderer?.resize(width, height);
+  }
+
+  function seed(born) {
+    for (let i = 0; i < PIPES_WANTED[0]; i += 1) {
+      const cell = pipes.randomCell();
+      if (cell) {
+        pipes.start(cell, born);
+      }
     }
-    textures = [];
-    const target = (w, h) => {
-      const texture = device.createTexture({
-        format: HDR,
-        size: [Math.max(1, w), Math.max(1, h)],
-        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-      });
-      textures.push(texture);
-      return texture.createView();
+  }
+
+  // The pipes decide each beat a little ahead, so the music can play their
+  // turns on the beat.
+  function growUntil(t) {
+    while (state.nextStep * BEAT < t + LOOKAHEAD) {
+      const beat = state.nextStep;
+      const at = beat * BEAT;
+      const inSection = beat % SECTION_BEATS;
+      const section = Math.floor(beat / SECTION_BEATS) % 2;
+      if (inSection === 0) {
+        pipes.clear();
+        seed(at);
+      } else if (inSection < SECTION_BEATS - DISSOLVE_BEATS) {
+        for (const pipe of pipes.step(at)) {
+          synth.turn(at, pipe.material);
+        }
+        if (pipes.growing < PIPES_WANTED[section] && inSection % 4 === 0) {
+          const cell = pipes.randomCell();
+          if (cell) {
+            pipes.start(cell, at);
+          }
+        }
+      }
+      state.nextStep += 1;
+    }
+  }
+
+  function view(t) {
+    const camera = orbitCamera(orbit.yaw, orbit.pitch, orbit.distance);
+    const inSection = (t % SECTION) / BEAT;
+    const section = Math.floor(t / SECTION) % 2;
+    // Night fades in over the first two bars of its section and out over the
+    // first two bars of the next.
+    const into = smoothstep(0, 8, inSection);
+    const night = section === 1 ? into : 1 - into;
+    dissolve.age = Math.max(0, (inSection - (SECTION_BEATS - DISSOLVE_BEATS)) * BEAT);
+    const palette = smoothstep(0, 0.5, dissolve.age) * (1 - smoothstep(1.6, 2.4, dissolve.age));
+    const beatPhase = (t / BEAT) % 1;
+    return {
+      aspect,
+      camera,
+      dissolve,
+      exposure: 1 + Math.exp(-beatPhase * 6) * 0.06,
+      glitch: state.glitch,
+      grab,
+      night,
+      palette,
+      ring,
+      shift,
+      time: t,
     };
-    const sw = Math.max(1, Math.round(width * renderScale));
-    const sh = Math.max(1, Math.round(height * renderScale));
-    const bw = Math.max(1, Math.floor(sw / 4));
-    const bh = Math.max(1, Math.floor(sh / 4));
-    const scene = target(sw, sh);
-    const bloomA = target(bw, bh);
-    const bloomB = target(bw, bh);
-    device.queue.writeBuffer(passUniforms[0], 0, new Float32Array([1 / sw, 1 / sh, 0, 0]));
-    device.queue.writeBuffer(passUniforms[1], 0, new Float32Array([0, 0, 1.6 / bw, 0]));
-    device.queue.writeBuffer(passUniforms[2], 0, new Float32Array([0, 0, 0, 1.6 / bh]));
-    const pass = (pipe, view, uniform) =>
-      device.createBindGroup({
-        entries: [
-          { binding: 0, resource: view },
-          { binding: 1, resource: sampler },
-          { binding: 2, resource: { buffer: uniform } },
-        ],
-        layout: pipe.getBindGroupLayout(0),
-      });
-    views = {
-      bloomA,
-      bloomB,
-      blurH: pass(blurPipeline, bloomA, passUniforms[1]),
-      blurV: pass(blurPipeline, bloomB, passUniforms[2]),
-      composite: device.createBindGroup({
-        entries: [
-          { binding: 0, resource: { buffer: uniforms } },
-          { binding: 1, resource: scene },
-          { binding: 2, resource: bloomA },
-          { binding: 3, resource: sampler },
-        ],
-        layout: compositePipeline.getBindGroupLayout(0),
-      }),
-      down: pass(downPipeline, scene, passUniforms[0]),
-      scene,
-    };
   }
 
-  // Everything the visitor and the clock move.
-  const state = {
-    camera: { distance: 7, pitch: 0.12, pitchVel: 0, targetDistance: 7, yaw: 0.55, yawVel: 0 },
-    // The core's shape: it morphs from `from` to `to`, starting at `at`.
-    form: { at: -10, duration: BEAT, from: 0, to: 0 },
-    glitch: 0,
-    // The tendril pulled out of the core: its base, its springy tip, and the
-    // point the tip chases while it is held.
-    grab: { amount: 0, base: [0, 0, 0], depth: 0, held: false, target: [0, 0, 0], tip: [0, 0, 0], tipVel: [0, 0, 0] },
-    hover: [0, 0],
-    kickBoost: 0,
-    lastArea: -1,
-    lastBeat: -1,
-    lastFormBlock: 0,
-    pending: [],
-    strike: { at: -10, points: lightning([0, 0, 0], [0, 0, 1]) },
-    wave: -10,
-  };
-  const pointer = { inside: false, ndc: [0, 0] };
-  let dragging = null;
-  let camera = orbitCamera(state.camera.yaw, state.camera.pitch, state.camera.distance, 0);
-  let elapsed = 0;
-
-  const ndcOf = (clientX, clientY) => [(clientX / innerWidth) * 2 - 1, 1 - (clientY / innerHeight) * 2];
-  const rayThrough = ([x, y]) =>
-    norm(add(add(scale(camera.fwd, FOCAL), camera.right, (x - coreAt[0]) * aspect), camera.up, y - coreAt[1]));
-  // How far along a ray from the eye it meets the core's bounding sphere, or
-  // null if it misses.
-  const hitCore = (dir) => {
-    const b = dot(camera.eye, dir);
-    const disc = b * b - (dot(camera.eye, camera.eye) - 1.25 * 1.25);
-    return disc < 0 ? null : -b - Math.sqrt(disc);
-  };
-
-  function morphTo(next, t, duration) {
-    const f = state.form;
-    if (t - f.at < f.duration) {
-      return;
+  // HUD: a small CD-player display of the track, the time and the levels.
+  const track = document.querySelector('[data-track]');
+  const clock = document.querySelector('[data-time]');
+  const bars = [...document.querySelectorAll('[data-level]')];
+  let shownSecond = -1;
+  function updateHud(t) {
+    const section = Math.floor(t / SECTION) % 2;
+    if (section !== state.section) {
+      state.section = section;
+      if (track) {
+        track.textContent = `0${section + 1} ${SECTIONS[section]}`;
+      }
     }
-    state.form = { at: t, duration, from: f.to, to: next % FORMS };
-  }
-
-  // A click away from the core strikes lightning toward it on the next
-  // sixteenth note.
-  function queueStrike(dir, t) {
-    const sixteenth = BEAT / 4;
-    const at = Math.ceil(t / sixteenth + 0.001) * sixteenth;
-    state.pending.push({ at, dir });
-    synth.strike(at);
-  }
-
-  function fire(strike, t) {
-    const far = add(camera.eye, strike.dir, 16);
-    state.strike = { at: t, points: lightning(scale(norm(far), 1.15), far) };
-    state.wave = t;
-    state.glitch = Math.max(state.glitch, 0.55);
-    state.kickBoost = 1;
-  }
-
-  function writeUniforms(t) {
-    const beat = t / BEAT;
-    const area = Math.floor(beat / AREA_BEATS);
-    const inArea = beat - area * AREA_BEATS;
-    const toNext = smoothstep(AREA_BEATS - 2, AREA_BEATS, inArea);
-    const colors = AREAS[area % AREAS.length].colors.map((c, i) =>
-      mixColor(c, AREAS[(area + 1) % AREAS.length].colors[i], toNext)
-    );
-    const kick = Math.max(Math.exp(-(beat % 1) * 6) * (beat % 4 < 1 ? 1 : 0.7), state.kickBoost);
-    const f = state.form;
-    const morph = smoothstep(0, 1, clamp((t - f.at) / f.duration, 0, 1));
-    const waveAge = t - state.wave;
-    f32.set([width, height, t, beat], 0);
-    f32.set([...camera.eye, kick], 4);
-    f32.set([...camera.right, FOCAL], 8);
-    f32.set([...camera.up, state.glitch], 12);
-    f32.set([...camera.fwd, t * 7.5], 16);
-    f32.set([-coreAt[0] * aspect, -coreAt[1], morph, f.from], 20);
-    f32.set([f.to, waveAge < 1.6 ? waveAge * 13 : -1, flicker(t - state.strike.at), Math.sin(Math.PI * morph)], 24);
-    f32.set([...state.grab.base, state.grab.amount], 28);
-    f32.set([...state.grab.tip, steps], 32);
-    f32.set([...colors[0], 0, ...colors[1], 0, ...colors[2], 0], 36);
-    // A flash of the new area's first color as the scene moves on.
-    f32.set([...colors[0], Math.max(0, 1 - Math.abs(inArea - 0.15) * 3) * (area > 0 ? 0.08 : 0)], 48);
-    state.strike.points.forEach((p, i) => f32.set([...p, 0], 52 + i * 4));
-    device.queue.writeBuffer(uniforms, 0, f32);
-    return area;
-  }
-
-  function encode() {
-    const encoder = device.createCommandEncoder();
-    const draw = (pipe, group, view) => {
-      const pass = encoder.beginRenderPass({ colorAttachments: [{ loadOp: 'clear', storeOp: 'store', view }] });
-      pass.setPipeline(pipe);
-      pass.setBindGroup(0, group);
-      pass.draw(3);
-      pass.end();
-    };
-    draw(scenePipeline, sceneGroup, views.scene);
-    draw(downPipeline, views.down, views.bloomA);
-    draw(blurPipeline, views.blurH, views.bloomB);
-    draw(blurPipeline, views.blurV, views.bloomA);
-    draw(compositePipeline, views.composite, context.getCurrentTexture().createView());
-    device.queue.submit([encoder.finish()]);
-  }
-
-  // The page's readouts: the area, the bar and beat, and a pulse on the beat.
-  const hud = {
-    area: document.querySelector('[data-area]'),
-    count: document.querySelector('[data-count]'),
-    pulse: document.querySelector('[data-pulse]'),
-    reticle: document.querySelector('.reticle'),
-  };
-
-  function updateHud(area, beat) {
-    const whole = Math.floor(beat);
-    if (whole === state.lastBeat) {
-      return;
+    const second = Math.floor(t);
+    if (clock && second !== shownSecond) {
+      shownSecond = second;
+      clock.textContent = `${String(Math.floor(second / 60) % 100).padStart(2, '0')}:${String(second % 60).padStart(2, '0')}`;
     }
-    state.lastBeat = whole;
-    if (hud.count) {
-      hud.count.textContent = `${String(Math.floor(whole / 4) % 100).padStart(2, '0')}.${(whole % 4) + 1}`;
-    }
-    if (hud.area && area !== state.lastArea) {
-      state.lastArea = area;
-      hud.area.textContent = `Area ${String((area % AREAS.length) + 1).padStart(2, '0')} · ${AREAS[area % AREAS.length].name}`;
-    }
-    for (const el of [hud.pulse, hud.reticle]) {
-      el?.animate([{ scale: 1.5 }, { scale: 1 }], { duration: BEAT * 700, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
-    }
+    const levels = synth.levels();
+    const beatPhase = (t / BEAT) % 1;
+    bars.forEach((bar, i) => {
+      const level = levels ? levels[i] : 0.25 + 0.55 * Math.exp(-beatPhase * (3 + i)) * (0.6 + 0.4 * Math.sin(t * (1.3 + i * 0.7)));
+      bar.style.setProperty('--level', level.toFixed(3));
+    });
   }
 
   function step(dt) {
     elapsed += dt;
     const t = elapsed;
-    const beat = t / BEAT;
-    const cam = state.camera;
-
-    // The clock's own moves: a new shape every four bars, with a glitch, and
-    // a push in and a roll as each area begins.
-    const block = Math.floor(beat / FORM_BEATS);
-    if (block !== state.lastFormBlock) {
-      state.lastFormBlock = block;
-      morphTo(state.form.to + 1, t, BEAT);
-      state.glitch = Math.max(state.glitch, block % 2 === 0 ? 0.9 : 0.35);
+    growUntil(t);
+    ribbons.step(dt);
+    // The last bar of a section dissolves the pipes from one of their joints,
+    // and the tape tears as the next section starts.
+    const sectionNow = Math.floor(t / SECTION);
+    if (sectionNow !== state.lastSection) {
+      state.glitch = state.lastSection === undefined ? 0 : 1;
+      state.lastSection = sectionNow;
     }
-    const punch = beat > AREA_BEATS ? Math.exp(-(beat % AREA_BEATS) * 1.2) : 0;
-
-    for (const strike of state.pending.filter((s) => s.at <= t)) {
-      fire(strike, t);
+    if ((t % SECTION) / BEAT >= SECTION_BEATS - DISSOLVE_BEATS && state.dissolving !== sectionNow) {
+      state.dissolving = sectionNow;
+      dissolve.from = pipes.joints.length > 0 ? pipes.joints[Math.floor(rand() * pipes.joints.length)].at : [0, 0, 0];
+      state.glitch = Math.max(state.glitch, 0.5);
     }
-    state.pending = state.pending.filter((s) => s.at > t);
+    state.glitch *= Math.exp(-dt * 3);
 
-    // Orbit: the drag's momentum, a slow drift and a lean toward the pointer.
-    if (!dragging) {
-      cam.yaw += cam.yawVel * dt;
-      cam.pitch += cam.pitchVel * dt;
-      cam.yawVel *= Math.exp(-dt * 2.5);
-      cam.pitchVel *= Math.exp(-dt * 2.5);
+    if (!drag.active) {
+      orbit.yaw += orbit.spin * dt + 0.035 * dt;
+      orbit.pitch = clamp(orbit.pitch + orbit.tilt * dt, -0.15, 1.1);
+      orbit.spin *= Math.exp(-dt * 2.2);
+      orbit.tilt *= Math.exp(-dt * 2.2);
     }
-    cam.yaw += dt * 0.06;
-    cam.pitch = clamp(cam.pitch + (0.12 - cam.pitch) * dt * 0.2, -1.2, 1.2);
-    cam.distance += (cam.targetDistance - cam.distance) * (1 - Math.exp(-dt * 6));
-    state.hover = state.hover.map((v, i) => v + ((pointer.inside ? pointer.ndc[i] : 0) - v) * (1 - Math.exp(-dt * 3)));
-    camera = orbitCamera(
-      cam.yaw + state.hover[0] * 0.18,
-      clamp(cam.pitch - state.hover[1] * 0.12, -1.25, 1.25),
-      cam.distance * (1 - 0.28 * punch),
-      Math.sin(t * 0.13) * 0.06 + punch * 0.4
-    );
+    orbit.distance += (orbit.zoom - orbit.distance) * (1 - Math.exp(-dt * 6));
 
-    // The tendril's tip is a spring: it chases the pointer while held and
-    // wobbles home when let go.
-    const g = state.grab;
-    if (g.held) {
-      g.target = add(camera.eye, rayThrough(pointer.ndc), g.depth);
-      const reach = add(g.target, g.base, -1);
-      if (length(reach) > 3.2) {
-        g.target = add(g.base, norm(reach), 3.2);
+    // A pulled pipe follows the pointer; let go, it springs back and wobbles.
+    if (!grab.held) {
+      grab.velocity = add(scale(grab.velocity, Math.exp(-dt * 7)), grab.offset, -95 * dt);
+      grab.offset = add(grab.offset, grab.velocity, dt);
+      if (length(grab.offset) < 0.002 && length(grab.velocity) < 0.01) {
+        grab.offset = [0, 0, 0];
+        grab.pipe = -1;
       }
     }
-    g.tipVel = add(scale(g.tipVel, Math.exp(-dt * 9)), add(g.target, g.tip, -1), 140 * dt);
-    g.tip = add(g.tip, g.tipVel, dt);
-    const home = length(add(g.tip, g.base, -1)) < 0.08 && length(g.tipVel) < 0.3;
-    g.amount += ((g.held || !home ? 1 : 0) - g.amount) * (1 - Math.exp(-dt * (g.held ? 14 : 5)));
-
-    state.glitch *= Math.exp(-dt * 4.5);
-    state.kickBoost *= Math.exp(-dt * 6);
-    const area = writeUniforms(t);
-    updateHud(area, beat);
-    synth.update(t, area);
+    ring.age += dt;
+    updateHud(t);
+    synth.update(t, Math.floor(t / SECTION) % 2);
   }
 
+  let raf = 0;
   let last = 0;
+  let shown = false;
   const slowFrames = [];
   let downgrades = 0;
+
+  function render() {
+    renderer.draw(view(elapsed), pipes, ribbons.triangles(aspect, 2 / height));
+    if (!shown) {
+      shown = true;
+      root.dataset.backdrop = 'live';
+      delete root.dataset.backdropReason;
+      const sound = document.querySelector('[data-sound]');
+      if (sound && !still) {
+        sound.hidden = false;
+      }
+    }
+  }
 
   function frame(now) {
     const dt = Math.min((now - last) / 1000, 0.1);
     last = now;
     step(dt);
-    encode();
-    // The scene's resolution steps down at most three times if the GPU
-    // cannot keep up.
+    render();
+    // The resolution steps down at most twice if the GPU cannot keep up.
     slowFrames.push(dt);
     if (slowFrames.length === 90) {
       slowFrames.sort((a, b) => a - b);
-      if (slowFrames[45] > 1 / 45 && downgrades < 3) {
-        renderScale *= 0.8;
+      if (slowFrames[45] > 1 / 45 && downgrades < 2) {
+        renderScale *= 0.75;
         downgrades += 1;
         layout();
       }
@@ -876,19 +1152,31 @@ async function start() {
     raf = requestAnimationFrame(frame);
   }
 
-  // One frame for reduced motion: a moment just after a strike, held.
+  // One frame for reduced motion: a screenful of pipes, already grown.
   function drawStill() {
-    elapsed = AREA_BEATS * BEAT * 0.5;
-    state.strike = { at: elapsed - 0.12, points: lightning([0.9, 0.5, 0.5], [9, 4, -6]) };
-    writeUniforms(elapsed);
-    encode();
+    pipes.clear();
+    seed(-99);
+    for (let i = 0; i < 60; i += 1) {
+      pipes.step(-99);
+      if (pipes.growing < 3) {
+        const cell = pipes.randomCell();
+        if (cell) {
+          pipes.start(cell, -99);
+        }
+      }
+    }
+    elapsed = 4;
+    state.nextStep = Number.POSITIVE_INFINITY;
+    render();
   }
 
   function run() {
     cancelAnimationFrame(raf);
     raf = 0;
-    if (reducedMotion.matches) {
-      synth.stop();
+    if (!renderer || gl.isContextLost()) {
+      return;
+    }
+    if (still) {
       drawStill();
     } else if (document.hidden) {
       synth.pause();
@@ -899,124 +1187,166 @@ async function start() {
     }
   }
 
-  // Input. The page's own controls and text keep their pointer.
+  function build() {
+    renderer = createRenderer(gl);
+    layout();
+  }
+
+  canvas.addEventListener('webglcontextlost', (event) => {
+    event.preventDefault();
+    cancelAnimationFrame(raf);
+    raf = 0;
+    renderer = null;
+    synth.pause();
+  });
+  canvas.addEventListener('webglcontextrestored', () => {
+    try {
+      build();
+      run();
+    } catch (error) {
+      keepStill(`it could not rebuild after the GPU reset (${error.message})`);
+    }
+  });
+
+  // --- Input --------------------------------------------------------------
+
+  const pointer = { x: 0, y: 0 };
+  const drag = { active: false, id: -1, lastX: 0, lastY: 0, moved: 0, onPipe: null, startX: 0, startY: 0 };
   const pinch = new Map();
   const isUi = (target) =>
     target instanceof Element && Boolean(target.closest('a, button, dialog, .hero, .notes-card, .top, .foot'));
-  const live = () => !reducedMotion.matches && root.dataset.backdrop === 'live';
+  const live = () => !still && root.dataset.backdrop === 'live';
+
+  function rayThrough(clientX, clientY) {
+    const rect = canvas.getBoundingClientRect();
+    const x = ((clientX - rect.left) / rect.width) * 2 - 1 - shift[0];
+    const y = 1 - ((clientY - rect.top) / rect.height) * 2 - shift[1];
+    const camera = orbitCamera(orbit.yaw, orbit.pitch, orbit.distance);
+    return { camera, ro: camera.eye, rd: norm(add(add(camera.fwd, camera.right, (x * aspect) / FOCAL), camera.up, y / FOCAL)) };
+  }
+
+  // Where a ray meets the plane through `point` that faces the camera.
+  function onPlane(ray, point) {
+    const t = dot(sub(point, ray.ro), ray.camera.fwd) / dot(ray.rd, ray.camera.fwd);
+    return add(ray.ro, ray.rd, t);
+  }
 
   addEventListener('pointermove', (event) => {
-    pointer.ndc = ndcOf(event.clientX, event.clientY);
-    pointer.inside = true;
-    if (hud.reticle) {
-      hud.reticle.style.translate = `${event.clientX}px ${event.clientY}px`;
-      const aim = live() && !isUi(event.target) && event.pointerType !== 'touch';
-      root.dataset.aim = aim ? (hitCore(rayThrough(pointer.ndc)) === null ? 'on' : 'core') : '';
-    }
-    if (pinch.has(event.pointerId) && pinch.size === 2) {
-      const [a, b] = [...pinch.values()];
-      const before = Math.hypot(a.x - b.x, a.y - b.y);
-      pinch.set(event.pointerId, { x: event.clientX, y: event.clientY });
-      const [c, d] = [...pinch.values()];
-      const after = Math.hypot(c.x - d.x, c.y - d.y);
-      state.camera.targetDistance = clamp(state.camera.targetDistance * (before / Math.max(after, 1)), 3.2, 12);
+    pointer.x = event.clientX;
+    pointer.y = event.clientY;
+    if (!live()) {
       return;
     }
-    if (!dragging || dragging.id !== event.pointerId) {
+    if (pinch.has(event.pointerId)) {
+      const before = [...pinch.values()];
+      pinch.set(event.pointerId, [event.clientX, event.clientY]);
+      if (pinch.size === 2) {
+        const after = [...pinch.values()];
+        const spread = (p) => Math.hypot(p[0][0] - p[1][0], p[0][1] - p[1][1]);
+        orbit.zoom = clamp(orbit.zoom * (spread(before) / Math.max(1, spread(after))), 9, 44);
+        return;
+      }
+    }
+    if (!drag.active || event.pointerId !== drag.id) {
+      if (event.pointerType === 'mouse') {
+        const { ro, rd } = rayThrough(event.clientX, event.clientY);
+        root.dataset.aim = !isUi(event.target) && pick(pipes, ro, rd) ? 'pipe' : '';
+      }
       return;
     }
-    const dx = event.clientX - dragging.x;
-    const dy = event.clientY - dragging.y;
-    const ms = Math.max(event.timeStamp - dragging.time, 8);
-    dragging.moved += Math.abs(dx) + Math.abs(dy);
-    dragging.x = event.clientX;
-    dragging.y = event.clientY;
-    dragging.time = event.timeStamp;
-    if (dragging.mode === 'orbit') {
-      const cam = state.camera;
-      cam.yaw -= dx * 0.006;
-      cam.pitch = clamp(cam.pitch + dy * 0.005, -1.2, 1.2);
-      cam.yawVel = ((-dx * 0.006) / ms) * 500;
-      cam.pitchVel = ((dy * 0.005) / ms) * 500;
+    const dx = event.clientX - drag.lastX;
+    const dy = event.clientY - drag.lastY;
+    drag.lastX = event.clientX;
+    drag.lastY = event.clientY;
+    drag.moved = Math.max(drag.moved, Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY));
+    if (grab.held) {
+      const ray = rayThrough(event.clientX, event.clientY);
+      const target = sub(onPlane(ray, grab.at), grab.at);
+      const reach = length(target);
+      grab.offset = reach > 3 ? scale(target, 3 / reach) : target;
+      return;
+    }
+    if (drag.moved > 4) {
+      const k = 3.2 / Math.min(innerWidth, innerHeight);
+      orbit.yaw -= dx * k;
+      orbit.pitch = clamp(orbit.pitch + dy * k, -0.15, 1.1);
+      orbit.spin = -dx * k * 60;
+      orbit.tilt = dy * k * 60;
     }
   });
+
   addEventListener('pointerdown', (event) => {
-    if (!live() || isUi(event.target) || event.button !== 0) {
+    if (!live() || isUi(event.target) || event.button > 0) {
       return;
     }
-    pinch.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    pinch.set(event.pointerId, [event.clientX, event.clientY]);
     if (pinch.size > 1) {
-      dragging = null;
-      state.grab.held = false;
-      state.grab.target = state.grab.base;
+      drag.active = false;
+      grab.held = false;
       return;
     }
-    pointer.ndc = ndcOf(event.clientX, event.clientY);
-    const dir = rayThrough(pointer.ndc);
-    const depth = hitCore(dir);
-    dragging = {
-      id: event.pointerId,
-      mode: depth === null ? 'orbit' : 'grab',
-      moved: 0,
-      time: event.timeStamp,
-      x: event.clientX,
-      y: event.clientY,
-    };
+    drag.active = true;
+    drag.id = event.pointerId;
+    drag.startX = drag.lastX = event.clientX;
+    drag.startY = drag.lastY = event.clientY;
+    drag.moved = 0;
+    const { ro, rd } = rayThrough(event.clientX, event.clientY);
+    const hit = pick(pipes, ro, rd);
+    drag.onPipe = hit;
+    if (hit) {
+      grab.held = true;
+      grab.pipe = hit.pipe;
+      grab.at = hit.at;
+      grab.offset = [0, 0, 0];
+      grab.velocity = [0, 0, 0];
+    }
     root.dataset.dragging = '';
-    if (depth !== null) {
-      const g = state.grab;
-      const surface = add(camera.eye, dir, depth);
-      g.base = scale(surface, 0.8);
-      g.depth = depth;
-      g.held = true;
-      if (g.amount < 0.05) {
-        g.tip = surface;
-        g.tipVel = [0, 0, 0];
-      }
-      g.target = surface;
-    }
   });
-  const release = (event) => {
+
+  function release(event) {
     pinch.delete(event.pointerId);
-    if (!dragging || dragging.id !== event.pointerId) {
+    if (!drag.active || event.pointerId !== drag.id) {
       return;
     }
+    drag.active = false;
+    delete root.dataset.dragging;
     const t = elapsed;
-    if (dragging.moved < 6) {
-      // A click: on the core it changes shape, anywhere else lightning strikes.
-      if (dragging.mode === 'grab') {
-        morphTo(state.form.to + 1, t, 0.35);
-        state.glitch = Math.max(state.glitch, 0.6);
-        state.kickBoost = 1;
-        synth.morph(t);
-      } else {
-        queueStrike(rayThrough(ndcOf(event.clientX, event.clientY)), t);
-      }
-    }
-    if (dragging.mode === 'grab') {
-      state.grab.held = false;
-      state.grab.target = state.grab.base;
-      if (dragging.moved >= 6) {
+    if (grab.held) {
+      grab.held = false;
+      if (drag.moved < 6) {
+        // A click on a pipe rings it.
+        ring.pipe = drag.onPipe.pipe;
+        ring.age = 0;
+        const segment = pipes.segments.find((s) => s.pipe === ring.pipe) ?? pipes.joints.find((j) => j.pipe === ring.pipe);
+        synth.ring(t, segment ? segment.material : 0);
+      } else if (length(grab.offset) > 0.4) {
         synth.snap(t);
       }
+      return;
     }
-    dragging = null;
-    delete root.dataset.dragging;
-  };
+    if (drag.moved < 6) {
+      // A click on empty space starts a pipe there.
+      const ray = rayThrough(event.clientX, event.clientY);
+      const p = onPlane(ray, [0, 0, 0]);
+      const cell = p.map((v, i) => clamp(Math.round(v), -BOX[i], BOX[i]));
+      if (pipes.start(cell, t)) {
+        synth.spawn(t);
+      }
+    }
+  }
   addEventListener('pointerup', release);
   addEventListener('pointercancel', release);
   addEventListener(
     'wheel',
     (event) => {
-      if (!live() || (event.target instanceof Element && event.target.closest('dialog'))) {
+      if (!live() || isUi(event.target)) {
         return;
       }
-      state.camera.targetDistance = clamp(state.camera.targetDistance * Math.exp(event.deltaY * 0.0012), 3.2, 12);
+      orbit.zoom = clamp(orbit.zoom * Math.exp(event.deltaY * 0.0012), 9, 44);
     },
     { passive: true }
   );
   root.addEventListener('pointerleave', () => {
-    pointer.inside = false;
     root.dataset.aim = '';
   });
 
@@ -1025,31 +1355,29 @@ async function start() {
   sound?.addEventListener('click', async () => {
     const on = await synth.toggle(elapsed);
     sound.setAttribute('aria-pressed', String(on));
-    sound.querySelector('[data-sound-label]').textContent = on ? 'Sound on' : 'Sound off';
-  });
-
-  layout();
-  writeUniforms(0);
-  run();
-  device.queue.onSubmittedWorkDone().then(() => {
-    if (root.dataset.backdrop !== 'still') {
-      root.dataset.backdrop = 'live';
-      if (sound && !reducedMotion.matches) {
-        sound.hidden = false;
-      }
+    const label = sound.querySelector('[data-sound-label]');
+    if (label) {
+      label.textContent = on ? 'Pause the music' : 'Play the music';
     }
   });
 
+  build();
+  run();
   new ResizeObserver(() => {
+    if (!renderer) {
+      return;
+    }
     layout();
-    if (reducedMotion.matches) {
-      drawStill();
+    if (still) {
+      render();
     }
   }).observe(canvas);
   document.addEventListener('visibilitychange', run);
-  reducedMotion.addEventListener('change', run);
+  reducedMotion.addEventListener('change', () => location.reload());
 }
 
-start().catch((error) => {
+try {
+  start();
+} catch (error) {
   keepStill(`it failed to start (${error.message})`);
-});
+}
