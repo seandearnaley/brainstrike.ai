@@ -789,7 +789,7 @@ function renderPage(manifest, notes) {
 <meta name="description" content="Brainstrike is a desktop AI app that works inside your folders, on the model keys you already have. Beta for macOS, Windows and Linux.">
 <meta name="theme-color" content="#000cde">
 <meta property="og:title" content="Brainstrike">
-<meta property="og:description" content="I built the AI app I wanted to use. A desktop workspace for macOS, Windows and Linux.">
+<meta property="og:description" content="Where your AI work lives. A desktop workspace for macOS, Windows and Linux.">
 <meta property="og:image" content="${SITE_URL}/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
@@ -814,8 +814,8 @@ ${channel}
 </header>
 <main class="hero">
 <p class="eyebrow">${release ? release.eyebrow : 'Desktop AI workspace'}</p>
-<h1>I built the AI app I wanted to use.</h1>
-<p class="pitch">It works inside your folders, shows you every file and tool it touches, and runs on the model keys you already have. This is the beta, so <a href="${ISSUES_URL}">tell me what breaks</a>.</p>
+<h1>Where your AI work lives.</h1>
+<p class="pitch">Brainstrike works inside your folders and shows you every file and tool the model touches. Your threads stay on your computer, and it runs on the model keys you already have. It’s in beta: <a href="${ISSUES_URL}">report what breaks</a>.</p>
 ${release ? release.get : '<p class="soon">The first beta is on its way.</p>'}
 </main>
 ${release ? release.card : ''}
