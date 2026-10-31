@@ -83,6 +83,7 @@ function random(seed) {
 const ENV = /* glsl */ `
 uniform float uNight;
 uniform float uTime;
+uniform vec4 uRipples[3]; // floor x, floor z, age in seconds, hue
 const vec3 BLUE = vec3(0.0, 0.0037, 0.73);
 const vec3 VOLT = vec3(0.63, 0.96, 0.0013);
 
@@ -95,6 +96,14 @@ vec3 sunColor() { return mix(vec3(1.0, 0.94, 0.82), VOLT * 0.9, uNight); }
 // The key light the pipes are lit by, from above the camera's side of the room.
 vec3 keyDir() { return normalize(vec3(0.35, 0.8, 0.5)); }
 vec3 keyColor() { return mix(vec3(1.0, 0.97, 0.92), vec3(0.45, 0.55, 1.0), uNight); }
+
+// The floor's flourishes cycle chartreuse, cyan and rose.
+vec3 iris(float h) {
+  float k = fract(h) * 3.0;
+  vec3 cyan = vec3(0.05, 0.8, 1.0);
+  vec3 rose = vec3(1.0, 0.3, 0.65);
+  return k < 1.0 ? mix(VOLT, cyan, smoothstep(0.0, 1.0, k)) : k < 2.0 ? mix(cyan, rose, smoothstep(1.0, 2.0, k)) : mix(rose, VOLT, smoothstep(2.0, 3.0, k));
+}
 
 float checker(vec2 p, vec2 w) {
   vec2 i = 2.0 * (abs(fract((p - 0.5 * w) * 0.5) - 0.5) - abs(fract((p + 0.5 * w) * 0.5) - 0.5)) / w;
@@ -124,6 +133,19 @@ vec3 floorAt(vec3 ro, vec3 rd, float blur) {
   float line = 1.0 - clamp(min(g.x, g.y) - 0.5, 0.0, 1.0);
   night += VOLT * line * 0.55;
   vec3 c = mix(day, night, uNight);
+  // Flourishes: slow bands of colour drift across the floor, and now and then
+  // a ring of light rolls out from a point. By day the light checks carry the
+  // colour, by night the grid lines.
+  float flow = sin(p.x * 0.16 + p.z * 0.1 + sin(p.z * 0.09 - p.x * 0.05 + uTime * 0.21) * 2.4 + uTime * 0.35);
+  vec3 tint = iris(p.z * 0.02 + p.x * 0.01 + uTime * 0.04) * smoothstep(0.7, 1.0, flow) * 0.35;
+  for (int i = 0; i < 3; i++) {
+    vec4 r = uRipples[i];
+    float d = distance(p.xz, r.xy);
+    float front = (d - r.z * 5.5) / 2.2;
+    float ring = exp(-front * front) * exp(-r.z * 0.4) * step(0.0, r.z);
+    tint += iris(r.w + d * 0.012) * ring;
+  }
+  c += tint * mix(0.6 + 0.7 * k, 0.12 + line * 1.6, uNight);
   return mix(c, floorFog(), 1.0 - exp(-t * 0.022));
 }
 
@@ -763,6 +785,7 @@ function createRenderer(gl) {
     gl.uniform1f(p.at('uAspect'), view.aspect);
     gl.uniform1f(p.at('uNight'), view.night);
     gl.uniform1f(p.at('uTime'), view.time);
+    gl.uniform4fv(p.at('uRipples'), view.ripples);
   }
 
   function fullscreen(p, target, inputs) {
@@ -970,6 +993,14 @@ function start() {
   const grab = { at: [0, 0, 0], held: false, offset: [0, 0, 0], pipe: -1, plane: null, velocity: [0, 0, 0] };
   const ring = { age: 99, pipe: -1 };
   const dissolve = { age: 0, from: [0, 0, 0] };
+  // Rings of light on the floor: where, when (scene time) and what colour.
+  const ripples = [0, 1, 2].map(() => ({ born: -99, hue: 0, x: 0, z: 0 }));
+  let nextRipple = 0;
+  const ripple = (x, z, born) => {
+    Object.assign(ripples[nextRipple], { born, hue: rand(), x, z });
+    nextRipple = (nextRipple + 1) % ripples.length;
+  };
+  const rippleData = new Float32Array(12);
   const state = { glitch: 0, nextStep: 0, section: -1 };
   let elapsed = 0;
 
@@ -1007,6 +1038,9 @@ function start() {
         pipes.clear();
         seed(at);
       } else if (inSection < SECTION_BEATS - DISSOLVE_BEATS) {
+        if (inSection % 16 === 8) {
+          ripple(rand() * 16 - 8, rand() * 16 - 8, at);
+        }
         for (const pipe of pipes.step(at)) {
           synth.turn(at, pipe.material);
         }
@@ -1032,6 +1066,7 @@ function start() {
     dissolve.age = Math.max(0, (inSection - (SECTION_BEATS - DISSOLVE_BEATS)) * BEAT);
     const palette = smoothstep(0, 0.5, dissolve.age) * (1 - smoothstep(1.6, 2.4, dissolve.age));
     const beatPhase = (t / BEAT) % 1;
+    ripples.forEach((r, i) => rippleData.set([r.x, r.z, t - r.born, r.hue], i * 4));
     return {
       aspect,
       camera,
@@ -1042,6 +1077,7 @@ function start() {
       night,
       palette,
       ring,
+      ripples: rippleData,
       shift,
       time: t,
     };
@@ -1331,6 +1367,7 @@ function start() {
       const cell = p.map((v, i) => clamp(Math.round(v), -BOX[i], BOX[i]));
       if (pipes.start(cell, t)) {
         synth.spawn(t);
+        ripple(cell[0], cell[2], t);
       }
     }
   }

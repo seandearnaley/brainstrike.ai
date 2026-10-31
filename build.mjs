@@ -225,16 +225,6 @@ function sanitizeNotes(html) {
     .trim();
 }
 
-// The first list items of the notes, or their first paragraphs, as text.
-function noteExcerpt(notes, limit) {
-  const items = [...notes.matchAll(/<li>([\s\S]*?)<\/li>/gu)];
-  const blocks = items.length > 0 ? items : [...notes.matchAll(/<p>([\s\S]*?)<\/p>/gu)];
-  return blocks
-    .map(([, inner]) => inner.replace(/<[^>]+>/gu, '').trim())
-    .filter(Boolean)
-    .slice(0, limit);
-}
-
 // Returns the newest published manifest and that release's notes, or a null
 // manifest when no release carries one.
 async function loadPublishedRelease() {
@@ -322,7 +312,6 @@ function renderRelease(manifest, notes) {
         `<a class="chip" href="${escapeHtml(build.url)}" data-build="${build.key}"${build === primary ? ' hidden' : ''}>${build.os}<span>${escapeHtml(build.arch)}</span></a>`
     )
     .join('');
-  const excerpt = notes ? noteExcerpt(notes, 3) : [];
   const date = formatDate(publishedAt);
   const rows = builds
     .map(
@@ -331,11 +320,7 @@ function renderRelease(manifest, notes) {
     .join('\n');
   const buildsJson = JSON.stringify(builds).replaceAll('<', '\\u003c');
   return {
-    card: `<aside class="notes-card" aria-labelledby="notes-card-title">
-<div class="notes-head"><h2 id="notes-card-title">What’s new</h2><span class="mono">${escapeHtml(version)} · ${date}</span></div>
-${excerpt.length > 0 ? `<ul class="excerpt">${excerpt.map((line) => `<li>${line}</li>`).join('')}</ul>` : ''}
-<button type="button" class="more" commandfor="notes" command="show-modal">Read the release notes <span aria-hidden="true">→</span></button>
-</aside>`,
+    card: `<button type="button" class="notes-pill" commandfor="notes" command="show-modal"><i aria-hidden="true"></i>What’s new in ${escapeHtml(version)}<span aria-hidden="true">→</span></button>`,
     dialog: `<dialog id="notes" closedby="any" aria-labelledby="notes-title">
 <div class="dialog-head">
 <div><p class="mono">Release notes · ${date}</p><h2 id="notes-title">Brainstrike ${escapeHtml(version)}</h2></div>
@@ -350,13 +335,12 @@ ${rows}
 <p class="sums-links"><a href="${escapeHtml(sums)}">SHA256SUMS</a><a href="${escapeHtml(releasePage)}">Release on GitHub</a></p>
 </div>
 </dialog>`,
-    eyebrow: `Desktop agent workspace · v${escapeHtml(version)}`,
-    footer: `<footer class="foot"><span>v${escapeHtml(version)} · ${date}</span><span>macOS builds signed and notarized</span><a href="${escapeHtml(sums)}">SHA256SUMS</a></footer>`,
+    footer: `<footer class="foot"><span>Signed and notarized for macOS</span><a href="${escapeHtml(sums)}">SHA256SUMS</a><a href="${ISSUES_URL}">Report a bug</a></footer>`,
     get: `<div class="get">
 <a class="primary" href="${escapeHtml(primary.url)}" data-primary>${downloadIcon}<span><span class="primary-title" data-title>Download for ${primary.os}</span><span class="primary-meta" data-meta>${escapeHtml(primary.arch)} · ${primary.package} · ${primary.size}</span></span></a>
-<p class="elsewhere">Brainstrike is a desktop app for macOS, Windows and Linux.</p>
-<div class="also"><span class="also-label">Also for</span>${chips}</div>
-<p class="caveat" data-caveat hidden>The Windows installer is not code-signed yet, so SmartScreen will warn before it runs.</p>
+<p class="elsewhere">For macOS, Windows and Linux.</p>
+<div class="also">${chips}</div>
+<p class="caveat" data-caveat hidden>Not code-signed yet, so SmartScreen warns first.</p>
 </div>
 <script type="application/json" id="builds">${buildsJson}</script>
 <script>${DETECT_SCRIPT}</script>`,
@@ -427,6 +411,7 @@ const DIALOG_SCRIPT = `(() => {
 const STYLES = `
 @font-face { font-family: 'Geist'; src: url('/fonts/geist.woff2') format('woff2'); font-weight: 400 700; font-display: swap; }
 @font-face { font-family: 'Geist Mono'; src: url('/fonts/geist-mono.woff2') format('woff2'); font-weight: 400 500; font-display: swap; }
+@font-face { font-family: 'Syne'; src: url('/fonts/syne.woff2') format('woff2'); font-weight: 400 800; font-display: swap; }
 @font-face { font-family: 'Silkscreen'; src: url('/fonts/silkscreen.woff2') format('woff2'); font-weight: 400; font-display: swap; }
 :root {
   color-scheme: dark;
@@ -440,6 +425,7 @@ const STYLES = `
   --line: rgb(247 248 250 / 0.22);
   --line-strong: rgb(247 248 250 / 0.45);
   --panel: rgb(1 6 120 / 0.72);
+  --display: 'Syne', 'Geist', ui-sans-serif, system-ui, sans-serif;
   --sans: 'Geist', ui-sans-serif, system-ui, sans-serif;
   --mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
   --pixel: 'Silkscreen', 'Geist Mono', ui-monospace, monospace;
@@ -502,8 +488,9 @@ html[data-dragging] .stage { cursor: grabbing; }
 }
 
 .top { grid-area: top; display: flex; align-items: center; gap: 12px; padding: clamp(16px, 2.8vh, 32px) 0; }
-.brand { display: inline-flex; align-items: center; gap: 10px; color: var(--ink); font: 650 1.05rem/1 var(--sans); letter-spacing: -0.03em; text-decoration: none; }
-.brand svg { width: 28px; height: 28px; }
+.brand { display: inline-flex; }
+.brand svg { width: 30px; height: 30px; transition: rotate 0.6s var(--ease); }
+.brand:hover svg { rotate: -12deg; }
 .channel {
   padding: 4px 6px 3px;
   background: var(--volt);
@@ -572,16 +559,26 @@ html:not([data-backdrop="live"]) .links { margin-left: auto; }
 .hero > :nth-child(4) { transition-delay: 0.24s; }
 @starting-style { .hero > * { opacity: 0; translate: 0 14px; } }
 .eyebrow { margin: 0 0 clamp(16px, 2.6vh, 28px); color: var(--ink-soft); font: 400 0.72rem/1 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; }
-h1 {
-  margin: 0;
+/* The wordmark: Syne at its heaviest. The letters swell in on load and ease
+   to a lighter weight in a wave under the pointer. */
+.wordmark {
+  margin: 0 0 0 -0.04em;
   color: var(--ink);
-  font: 650 clamp(2.3rem, min(5.4vw, 8.4vh), 5rem)/1 var(--sans);
-  letter-spacing: -0.045em;
-  text-wrap: balance;
+  font: 800 clamp(3.2rem, min(7vw, 12vh), 7rem)/0.92 var(--display);
+  letter-spacing: -0.055em;
+  white-space: nowrap;
 }
-.pitch { max-width: 32rem; margin: clamp(16px, 2.6vh, 28px) 0 0; color: var(--ink-soft); font-size: clamp(1rem, 0.92rem + 0.3vw, 1.16rem); line-height: 1.55; text-wrap: pretty; }
-.pitch a { color: var(--ink); text-decoration-color: var(--volt); text-decoration-thickness: 2px; text-underline-offset: 4px; }
-.pitch a:hover { color: var(--volt); }
+.wordmark span span {
+  display: inline-block;
+  font-variation-settings: 'wght' 800;
+  transition: font-variation-settings 0.5s var(--ease), opacity 0.6s var(--ease);
+  transition-delay: calc(var(--i) * 32ms);
+}
+@starting-style { .wordmark span span { font-variation-settings: 'wght' 400; opacity: 0; } }
+.wordmark:hover span span { font-variation-settings: 'wght' 560; }
+.tagline { margin: clamp(12px, 2vh, 22px) 0 0; color: var(--ink); font: 500 clamp(1.2rem, 0.9rem + 1vw, 1.8rem)/1.2 var(--sans); letter-spacing: -0.03em; }
+.cursor { display: inline-block; width: 0.48em; height: 0.9em; margin-left: 0.14em; background: var(--volt); translate: 0 0.12em; animation: blink 1.1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
 .soon { margin: clamp(22px, 4vh, 42px) 0 0; color: var(--ink); font: 400 0.9rem/1.4 var(--mono); }
 
 .get { margin-top: clamp(22px, 4.2vh, 44px); }
@@ -602,8 +599,7 @@ h1 {
 .primary-title { display: block; font: 650 1.02rem/1.15 var(--sans); letter-spacing: -0.02em; }
 .primary-meta { display: block; margin-top: 4px; font: 400 0.72rem/1.3 var(--mono); opacity: 0.8; }
 .elsewhere { display: none; margin: 0; color: var(--ink); }
-.also { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 20px; }
-.also-label { margin-right: 4px; color: var(--dim); font: 400 0.68rem/1 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; }
+.also { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 18px; }
 .chip {
   display: inline-flex;
   align-items: baseline;
@@ -621,48 +617,31 @@ h1 {
 .caveat { max-width: 30rem; margin: 12px 0 0; color: var(--dim); font-size: 0.82rem; }
 html[data-get="elsewhere"] .primary { display: none; }
 html[data-get="elsewhere"] .elsewhere { display: block; }
-html[data-get="elsewhere"] .also-label { display: none; }
 
-/* Panels with a thin title bar, like a window from 1997 kept tidy. */
-.notes-card, dialog { border: 1px solid var(--line-strong); background: var(--panel); }
-.notes-card {
+/* What's new: one small button that opens the notes. */
+.notes-pill {
   grid-area: notes;
+  justify-self: end;
   align-self: end;
-  width: 100%;
-  padding: 0 16px 10px;
-  backdrop-filter: blur(16px) saturate(1.3);
-  box-shadow: 6px 6px 0 rgb(1 4 42 / 0.6);
-}
-.notes-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 -16px; padding: 7px 16px 6px; border-bottom: 1px solid var(--line); background: rgb(247 248 250 / 0.08); }
-.notes-head h2 { margin: 0; color: var(--volt); font: 400 0.66rem/1 var(--pixel); letter-spacing: 0.04em; text-transform: uppercase; }
-.excerpt { display: grid; gap: 8px; margin: 12px 0 6px; padding: 0; list-style: none; }
-.excerpt li {
-  position: relative;
-  display: -webkit-box;
-  padding-left: 16px;
-  overflow: hidden;
-  color: var(--ink-soft);
-  font-size: 0.88rem;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-.excerpt li::before { position: absolute; top: 0.55em; left: 0; width: 6px; height: 6px; background: var(--volt); content: ''; }
-.more {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 4px;
-  padding: 8px 0;
-  border: 0;
-  background: none;
+  gap: 10px;
+  padding: 10px 14px 9px;
+  border: 1px solid var(--line-strong);
+  background: var(--panel);
+  backdrop-filter: blur(16px) saturate(1.3);
+  box-shadow: 4px 4px 0 rgb(1 4 42 / 0.6);
   color: var(--ink);
-  font: 600 0.86rem/1 var(--sans);
+  font: 400 0.64rem/1 var(--pixel);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   cursor: pointer;
+  transition: border-color 0.2s;
 }
-.more span { transition: translate 0.25s var(--ease); }
-.more:hover span { translate: 4px 0; }
+.notes-pill:hover { border-color: var(--volt); }
+.notes-pill i { width: 6px; height: 6px; background: var(--volt); animation: blink 2.4s steps(1) infinite; }
+.notes-pill span { color: var(--volt); transition: translate 0.25s var(--ease); }
+.notes-pill:hover span { translate: 3px 0; }
 
 .foot { grid-area: foot; align-self: end; display: flex; flex-wrap: wrap; gap: 4px 16px; color: var(--dim); font: 400 0.68rem/1.5 var(--mono); letter-spacing: 0.04em; }
 .foot a { color: var(--ink-soft); text-decoration: none; border-bottom: 1px solid var(--line); }
@@ -691,6 +670,8 @@ html:not([data-backdrop="live"]) .hint { display: none; }
 }
 
 dialog {
+  border: 1px solid var(--line-strong);
+  background: var(--panel);
   width: min(42rem, calc(100vw - 32px));
   max-height: min(82dvh, 46rem);
   padding: 0;
@@ -742,9 +723,6 @@ dialog::backdrop { background: rgb(1 4 42 / 0.5); backdrop-filter: blur(4px); }
 .sums code { color: var(--ink-soft); font: 400 0.7rem/1.5 var(--mono); word-break: break-all; }
 .sums-links { display: flex; gap: 18px; margin: 14px 0 0; font-size: 0.86rem; }
 
-@media (max-height: 640px) and (min-width: 761px) {
-  .excerpt li:nth-child(n + 2) { display: none; }
-}
 @media (max-width: 1100px) and (min-width: 761px) {
   .lcd [data-track] { display: none; }
 }
@@ -753,17 +731,12 @@ dialog::backdrop { background: rgb(1 4 42 / 0.5); backdrop-filter: blur(4px); }
   .scrim { background: linear-gradient(180deg, rgb(0 5 110 / 0) 0%, rgb(0 5 110 / 0) 30%, rgb(0 5 110 / 0.55) 50%, rgb(1 4 60 / 0.9) 72%); }
   .lcd { gap: 10px; padding: 7px 9px 6px; }
   .lcd [data-track] { display: none; }
-  .links .link-notes { display: none; }
   .hero { align-self: end; padding-block: 0; }
-  h1 { font-size: clamp(2.1rem, 9.6vw, 3rem); }
-  .pitch { margin-top: 14px; }
+  /* Syne sets "Brainstrike" about 7.9em wide, so this fills the column. */
+  .wordmark { font-size: calc((100vw - 2 * var(--gutter)) / 8.1); }
   .get { margin-top: 22px; }
   .primary { width: 100%; }
-  .notes-card { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding: 10px 14px; }
-  .notes-head { display: block; margin: 0; padding: 0; border: 0; background: none; }
-  .notes-head .mono { display: block; margin-top: 4px; }
-  .excerpt { display: none; }
-  .more { margin: 0; white-space: nowrap; }
+  .notes-pill { justify-self: start; }
   .foot { display: none; }
   .hint { top: 72px; right: 0; left: 0; text-align: center; writing-mode: horizontal-tb; translate: none; letter-spacing: 0.14em; }
 }
@@ -777,9 +750,7 @@ function renderPage(manifest, notes) {
   const release = manifest ? renderRelease(manifest, notes) : null;
   const label = manifest ? CHANNEL_LABELS[manifest.channel] : null;
   const channel = label ? `<span class="channel">${label}</span>` : '';
-  const notesLink = release
-    ? '<button type="button" class="link link-notes" commandfor="notes" command="show-modal">Release notes</button>'
-    : '';
+  const letters = [...'Brainstrike'].map((c, i) => `<span style="--i:${i}">${c}</span>`).join('');
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -797,6 +768,7 @@ function renderPage(manifest, notes) {
 <link rel="icon" href="/favicon.ico" sizes="any">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="preload" href="/fonts/syne.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/geist.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/silkscreen.woff2" as="font" type="font/woff2" crossorigin>
 <style>${STYLES}</style>
@@ -807,21 +779,21 @@ function renderPage(manifest, notes) {
 <div class="stage" aria-hidden="true"></div>
 <div class="scrim" aria-hidden="true"></div>
 <header class="top">
-<a class="brand" href="/">${brandMark}<span>Brainstrike</span></a>
+<a class="brand" href="/">${brandMark}<span class="sr-only">Brainstrike</span></a>
 ${channel}
 <div class="player"><button type="button" class="play" data-sound aria-pressed="false" hidden><svg class="start" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11l9-5.5z" fill="currentColor"/></svg><svg class="pause" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 2.5h3v11h-3zm6 0h3v11h-3z" fill="currentColor"/></svg><span class="sr-only" data-sound-label>Play the music</span></button><span class="lcd" aria-hidden="true"><span data-track>01 Daylight</span><span data-time>00:00</span><span class="levels"><i data-level></i><i data-level></i><i data-level></i><i data-level></i><i data-level></i><i data-level></i></span></span></div>
-<nav class="links" aria-label="Site">${notesLink}<a class="link" href="${RELEASES_HUB_URL}">GitHub</a></nav>
+<nav class="links" aria-label="Site"><a class="link" href="${RELEASES_HUB_URL}">GitHub</a></nav>
 </header>
 <main class="hero">
-<p class="eyebrow">${release ? release.eyebrow : 'Desktop agent workspace'}</p>
-<h1>Agents that show their work.</h1>
-<p class="pitch">Brainstrike runs agents inside your folders. They read and edit files, run commands and hand work to each other, and you see every step. Threads are saved on your computer, and it runs on the model keys you already have. It’s in beta: <a href="${ISSUES_URL}">report what breaks</a>.</p>
+<p class="eyebrow">Desktop agent workspace</p>
+<h1 class="wordmark" aria-label="Brainstrike"><span aria-hidden="true">${letters}</span></h1>
+<p class="tagline">Agents that show their work.<span class="cursor" aria-hidden="true"></span></p>
 ${release ? release.get : '<p class="soon">The first beta is on its way.</p>'}
 </main>
 ${release ? release.card : ''}
 ${release ? release.footer : ''}
 ${release ? release.dialog : ''}
-<p class="hint" aria-hidden="true"><span class="fine">Drag to orbit · Scroll to zoom · Click to start a pipe · Pull a pipe to bend it</span><span class="touch">Drag · Pinch · Tap a pipe</span></p>
+<p class="hint" aria-hidden="true"><span class="fine">Drag to orbit · Click to grow · Pull to bend</span><span class="touch">Drag · Pinch · Tap</span></p>
 <script>${DIALOG_SCRIPT}</script>
 <script type="module" src="/backdrop.js"></script>
 </body>

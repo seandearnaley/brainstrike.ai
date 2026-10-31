@@ -36,11 +36,12 @@ hook for `main` as the Actions secret `VERCEL_SITE_DEPLOY_HOOK` for that.
 - `public/backdrop.js` draws the backdrop, the 1990s pipe screensaver
   rebuilt with WebGL2: chrome, enamel and pearl pipes grow one cell a beat
   over an endless checkerboard floor under a link-blue sky, with two Mystify
-  ribbons behind them. The music's two 16-bar sections, Daylight and Night
+  ribbons behind them; bands of colour drift across the floor, and every four
+  bars a ring of light rolls out over it. The music's two 16-bar sections, Daylight and Night
   mall, change the sky; at each change the pipes dissolve, dithered down to
   the web-safe palette, and new ones start. Drag to orbit, scroll or pinch to
-  zoom, click empty space to start a pipe, click a pipe to ring it, pull a
-  pipe to bend it. The header's little CD player shows the track and time.
+  zoom, click empty space to start a pipe (and a ring of light), click a pipe
+  to ring it, pull a pipe to bend it. The header's little CD player shows the track and time.
 - `public/synth.js` is its music, 90s internet dreamwave at 100 BPM: a Web
   Audio synth on the scene's clock, off until the visitor presses play. Every
   turn a pipe takes plays a note of the chord.
@@ -50,7 +51,8 @@ hook for `main` as the Actions secret `VERCEL_SITE_DEPLOY_HOOK` for that.
   one frame and takes no input.
 - The colours, favicon and social card come from the Brainstrike identity
   pack: ultramarine `#000CDE`, close to the web's original link blue, and
-  chartreuse `#D0FB07`. The fonts (Geist, Geist Mono and Silkscreen, all OFL)
+  chartreuse `#D0FB07`. The wordmark is set in Syne; the fonts (Syne, Geist,
+  Geist Mono and Silkscreen, all OFL)
   are served from `public/fonts/`, so no outside stylesheet holds up the page.
 
 ## Environment
