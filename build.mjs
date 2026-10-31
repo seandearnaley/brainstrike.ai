@@ -1,5 +1,5 @@
 // Writes dist/, the Brainstrike landing page: dist/index.html plus everything
-// in public/ (the WebGPU backdrop module and the icons).
+// in public/ (the WebGL2 backdrop, its synth, the fonts and the icons).
 //
 // The page is built from the newest published release (prereleases included)
 // of seandearnaley/brainstrike-releases that carries a release-manifest.json
@@ -277,15 +277,13 @@ const formatDate = (iso) =>
     new Date(iso)
   );
 
-// The app icon's head, split by a bolt (assets/icons/icon.svg in the
-// brainstrike repo), for the small mark beside the name.
-const LOGO_HEAD =
-  'M612 134C493 103 373 136 290 218C223 284 197 360 214 448L149 571Q145 578 152 582L210 616L225 720C229 753 245 769 280 769H336L494 473L342 474Z M640 146C749 190 821 281 821 396C821 478 777 548 730 616C710 646 704 676 712 710L736 808L418 930L380 795C377 782 370 771 357 769L622 417Q628 409 619 408L486 405Z';
-  'M612 134C493 103 373 136 290 218C223 284 197 360 214 448L149 571Q145 578 152 582L210 616L225 720C229 753 245 769 280 769H336L494 473L342 474Z M544 174C462 158 377 184 317 240C263 291 244 363 254 441Q257 453 251 467L202 564L239 587Q247 592 249 605L265 710Q268 727 284 727H322L437 498L269 494Z M640 146C749 190 821 281 821 396C821 478 777 548 730 616C710 646 704 676 712 710L736 808L418 930L380 795C377 782 370 771 357 769L622 417Q628 409 619 408L486 405Z M651 200L548 380L684 384L405 747Q413 759 417 777L445 874L686 782L670 712C657 661 671 624 695 589C739 524 777 463 777 400C777 315 728 244 651 200Z';
-const metal = (id) => `<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="278" x2="734" y1="181" y2="858">
-<stop stop-color="#f4f4f3"/><stop offset=".25" stop-color="#cececd"/><stop offset=".5" stop-color="#929291"/><stop offset=".75" stop-color="#515150"/><stop offset="1" stop-color="#292928"/>
-</linearGradient>`;
-const brandMark = `<svg viewBox="0 0 1024 1024" aria-hidden="true"><defs>${metal('mark-metal')}</defs><path d="${LOGO_HEAD}" fill="url(#mark-metal)"/></svg>`;
+// The identity mark: a chartreuse circle with the zig-zag bolt cut out
+// (Brainstrike-Mark.svg from the production identity pack).
+const MARK =
+  'M512 78 A434 434 0 1 1 512 946 A434 434 0 1 1 512 78 Z M618 128 L251 558 L493 558 L358 892 L734 440 L524 440 Z';
+const brandMark = `<svg viewBox="0 0 1024 1024" aria-hidden="true"><path d="${MARK}" fill="#d0fb07" fill-rule="evenodd"/></svg>`;
+const ISSUES_URL = 'https://github.com/seandearnaley/brainstrike-releases/issues';
+const SITE_URL = 'https://brainstrike.ai';
 const downloadIcon =
   '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>';
 
@@ -427,29 +425,29 @@ const DIALOG_SCRIPT = `(() => {
 })();`;
 
 const STYLES = `
+@font-face { font-family: 'Geist'; src: url('/fonts/geist.woff2') format('woff2'); font-weight: 400 700; font-display: swap; }
+@font-face { font-family: 'Geist Mono'; src: url('/fonts/geist-mono.woff2') format('woff2'); font-weight: 400 500; font-display: swap; }
+@font-face { font-family: 'Silkscreen'; src: url('/fonts/silkscreen.woff2') format('woff2'); font-weight: 400; font-display: swap; }
 :root {
   color-scheme: dark;
-  --bg: #05030c;
-  --ink: #efeaff;
-  --ink-bright: #ffffff;
-  --muted: #b5addb;
-  --dim: #8078a8;
-  --line: rgb(214 204 255 / 0.14);
-  --line-strong: rgb(214 204 255 / 0.32);
-  --glass: rgb(16 10 36 / 0.42);
-  --cyan: #5ef2ff;
-  --violet: #9a6bff;
-  --magenta: #ff4fd8;
-  --peach: #ffb36b;
-  --display: 'Unbounded', ui-sans-serif, system-ui, sans-serif;
+  --blue: #000cde;
+  --blue-deep: #00078a;
+  --night: #01042a;
+  --volt: #d0fb07;
+  --ink: #f7f8fa;
+  --ink-soft: rgb(247 248 250 / 0.8);
+  --dim: rgb(247 248 250 / 0.62);
+  --line: rgb(247 248 250 / 0.22);
+  --line-strong: rgb(247 248 250 / 0.45);
+  --panel: rgb(1 6 120 / 0.72);
   --sans: 'Geist', ui-sans-serif, system-ui, sans-serif;
   --mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
-  --serif: 'Instrument Serif', ui-serif, Georgia, serif;
+  --pixel: 'Silkscreen', 'Geist Mono', ui-monospace, monospace;
   --gutter: clamp(16px, 3.6vw, 56px);
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 * { box-sizing: border-box; }
-html { background: var(--bg); }
+html { background: var(--blue); }
 body {
   margin: 0;
   min-height: 100dvh;
@@ -463,281 +461,194 @@ body {
   overflow-x: clip;
 }
 a { color: inherit; }
-:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }
-::selection { background: var(--magenta); color: #14031c; }
+:focus-visible { outline: 2px solid var(--volt); outline-offset: 3px; }
+::selection { background: var(--volt); color: var(--blue); }
 [hidden] { display: none !important; }
-.mono { margin: 0; font: 400 0.72rem/1.3 var(--mono); letter-spacing: 0.02em; color: var(--muted); }
+.mono { margin: 0; font: 400 0.72rem/1.3 var(--mono); letter-spacing: 0.02em; color: var(--dim); }
 
-.backdrop, .still, .stage, .scrim, .frame { position: fixed; inset: 0; }
-.backdrop, .still, .scrim, .frame { pointer-events: none; }
+.backdrop, .still, .stage, .scrim { position: fixed; inset: 0; }
+.backdrop, .still, .scrim { pointer-events: none; }
+/* The sky without WebGL: a link-blue gradient over a checkerboard floor. */
 .still {
   z-index: -5;
-  background:
-    radial-gradient(34% 46% at 74% 44%, rgb(154 107 255 / 0.42), transparent 70%),
-    radial-gradient(24% 34% at 84% 28%, rgb(94 242 255 / 0.3), transparent 70%),
-    radial-gradient(30% 40% at 66% 70%, rgb(255 79 216 / 0.28), transparent 70%),
-    radial-gradient(120% 90% at 70% 45%, #150b31, var(--bg) 70%);
+  overflow: hidden;
+  background: linear-gradient(180deg, #000658 0%, var(--blue) 34%, #4a63ff 56%, #c3cdff 63.5%, #c3cdff 64%, var(--blue) 64.2%);
 }
-.backdrop { z-index: -4; display: block; width: 100%; height: 100%; opacity: 0; transition: opacity 1.6s ease; }
+.still::after {
+  position: absolute;
+  top: 64%;
+  left: -60%;
+  width: 220%;
+  height: 90%;
+  background: repeating-conic-gradient(var(--blue) 0 25%, #8c9dff 0 50%) 0 0 / 140px 140px;
+  content: '';
+  transform: perspective(420px) rotateX(72deg);
+  transform-origin: 50% 0;
+  -webkit-mask-image: linear-gradient(0deg, #000 30%, transparent 92%);
+  mask-image: linear-gradient(0deg, #000 30%, transparent 92%);
+}
+.backdrop { z-index: -4; display: block; width: 100%; height: 100%; opacity: 0; transition: opacity 1.2s ease; }
 html[data-backdrop="live"] .backdrop { opacity: 1; }
 /* The scene's own surface: it takes drags and pinches where nothing else is. */
 .stage { z-index: -3; display: none; touch-action: none; }
 html[data-backdrop="live"] .stage { display: block; }
+html[data-aim="pipe"] .stage { cursor: grab; }
+html[data-dragging] .stage { cursor: grabbing; }
 .scrim {
   z-index: -2;
   background:
-    linear-gradient(90deg, rgb(5 3 12 / 0.84) 0%, rgb(5 3 12 / 0.55) 30%, rgb(5 3 12 / 0) 56%),
-    linear-gradient(0deg, rgb(5 3 12 / 0.62) 0%, rgb(5 3 12 / 0) 26%),
-    linear-gradient(180deg, rgb(5 3 12 / 0.6) 0%, rgb(5 3 12 / 0) 14%);
+    linear-gradient(90deg, rgb(0 5 110 / 0.72) 0%, rgb(0 5 110 / 0.42) 32%, rgb(0 5 110 / 0) 58%),
+    linear-gradient(0deg, rgb(0 4 70 / 0.55) 0%, rgb(0 4 70 / 0) 24%);
 }
-/* A viewfinder's corner marks. */
-.frame {
-  z-index: -1;
-  inset: 12px;
-  --c: var(--line-strong);
-  background:
-    linear-gradient(var(--c), var(--c)) top left / 22px 1px,
-    linear-gradient(var(--c), var(--c)) top left / 1px 22px,
-    linear-gradient(var(--c), var(--c)) top right / 22px 1px,
-    linear-gradient(var(--c), var(--c)) top right / 1px 22px,
-    linear-gradient(var(--c), var(--c)) bottom left / 22px 1px,
-    linear-gradient(var(--c), var(--c)) bottom left / 1px 22px,
-    linear-gradient(var(--c), var(--c)) bottom right / 22px 1px,
-    linear-gradient(var(--c), var(--c)) bottom right / 1px 22px;
-  background-repeat: no-repeat;
-}
-
-/* The lock-on reticle that stands in for the cursor over the scene. */
-.reticle {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: 40;
-  width: 40px;
-  height: 40px;
-  margin: -20px 0 0 -20px;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.2s, width 0.3s var(--ease), height 0.3s var(--ease), margin 0.3s var(--ease);
-}
-.reticle::before {
-  position: absolute;
-  inset: 0;
-  border: 1px solid rgb(255 255 255 / 0.75);
-  border-radius: 50%;
-  content: '';
-  transition: border-color 0.3s, box-shadow 0.3s;
-}
-.reticle::after {
-  position: absolute;
-  inset: 0;
-  background:
-    linear-gradient(#fff, #fff) center / 1px 9px no-repeat,
-    linear-gradient(#fff, #fff) center / 9px 1px no-repeat;
-  content: '';
-}
-.reticle i {
-  position: absolute;
-  inset: -7px;
-  border: 1px dashed var(--magenta);
-  border-radius: 50%;
-  opacity: 0;
-  animation: turn 5s linear infinite;
-  transition: opacity 0.3s;
-}
-@keyframes turn { to { rotate: 1turn; } }
-html[data-aim="on"] .stage, html[data-aim="core"] .stage, html[data-dragging] .stage { cursor: none; }
-html[data-aim="on"] .reticle, html[data-aim="core"] .reticle { opacity: 1; }
-html[data-aim="core"] .reticle { width: 62px; height: 62px; margin: -31px 0 0 -31px; }
-html[data-aim="core"] .reticle::before { border-color: var(--magenta); box-shadow: 0 0 22px rgb(255 79 216 / 0.55), inset 0 0 12px rgb(255 79 216 / 0.35); }
-html[data-aim="core"] .reticle i { opacity: 1; }
 
 .top { grid-area: top; display: flex; align-items: center; gap: 12px; padding: clamp(16px, 2.8vh, 32px) 0; }
-.brand { display: inline-flex; align-items: center; gap: 10px; color: var(--ink-bright); font: 500 1rem/1 var(--display); letter-spacing: -0.02em; text-decoration: none; }
+.brand { display: inline-flex; align-items: center; gap: 10px; color: var(--ink); font: 650 1.05rem/1 var(--sans); letter-spacing: -0.03em; text-decoration: none; }
 .brand svg { width: 28px; height: 28px; }
 .channel {
-  padding: 5px 8px 4px;
-  border: 1px solid rgb(94 242 255 / 0.45);
-  border-radius: 999px;
-  background: rgb(94 242 255 / 0.08);
-  color: var(--cyan);
-  font: 500 0.64rem/1 var(--mono);
-  letter-spacing: 0.16em;
+  padding: 4px 6px 3px;
+  background: var(--volt);
+  color: var(--blue);
+  font: 400 0.6rem/1 var(--pixel);
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
-.hud { display: flex; align-items: center; gap: 16px; margin-left: auto; color: var(--dim); font: 400 0.68rem/1 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; }
-.hud [data-area] { color: var(--muted); }
-.hud [data-count] { min-width: 3.4em; color: var(--ink); font-variant-numeric: tabular-nums; }
-html:not([data-backdrop="live"]) .hud { display: none; }
+
+/* A little CD player: play and pause, the track, the time and the levels. */
+.player { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+html:not([data-backdrop="live"]) .player { display: none; }
+.lcd {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 7px 12px 6px;
+  border: 1px solid var(--line);
+  background: rgb(0 3 60 / 0.55);
+  color: var(--volt);
+  font: 400 0.66rem/1 var(--pixel);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.lcd [data-time] { font-variant-numeric: tabular-nums; }
+.levels { display: inline-flex; align-items: flex-end; gap: 2px; height: 12px; }
+.levels i { width: 3px; height: calc(2px + var(--level, 0.2) * 10px); background: currentColor; }
+.play {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  background: var(--volt);
+  color: var(--blue);
+  box-shadow: 3px 3px 0 var(--night);
+  cursor: pointer;
+  transition: translate 0.15s, box-shadow 0.15s;
+}
+.play:hover { translate: -1px -1px; box-shadow: 4px 4px 0 var(--night); }
+.play:active { translate: 2px 2px; box-shadow: 1px 1px 0 var(--night); }
+.play svg { width: 14px; height: 14px; }
+.play .pause, .play[aria-pressed="true"] .start { display: none; }
+.play[aria-pressed="true"] .pause { display: block; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .links { display: flex; gap: 4px; }
 html:not([data-backdrop="live"]) .links { margin-left: auto; }
 .link {
   padding: 10px 12px;
   border: 0;
-  border-radius: 999px;
   background: none;
-  color: var(--muted);
+  color: var(--ink-soft);
   font: 500 0.88rem/1 var(--sans);
   text-decoration: none;
   cursor: pointer;
   transition: color 0.2s, background 0.2s;
 }
-.link:hover { background: rgb(255 255 255 / 0.07); color: var(--ink-bright); }
-.sound {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  padding: 9px 14px 9px 12px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: rgb(255 255 255 / 0.04);
-  backdrop-filter: blur(14px) saturate(1.4);
-  color: var(--muted);
-  font: 500 0.68rem/1 var(--mono);
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: color 0.2s, border-color 0.2s, background 0.2s, box-shadow 0.3s;
-}
-.sound:hover { border-color: var(--line-strong); color: var(--ink-bright); }
-.sound .bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 12px; }
-.sound .bars i { width: 2px; height: 3px; border-radius: 1px; background: currentColor; }
-.sound[aria-pressed="true"] { border-color: rgb(94 242 255 / 0.55); background: rgb(94 242 255 / 0.1); color: var(--ink-bright); box-shadow: 0 0 24px -6px rgb(94 242 255 / 0.7); }
-.sound[aria-pressed="true"] .bars i { animation: eq 0.469s ease-in-out infinite alternate; }
-.sound[aria-pressed="true"] .bars i:nth-child(2) { animation-delay: -0.12s; }
-.sound[aria-pressed="true"] .bars i:nth-child(3) { animation-delay: -0.31s; }
-.sound[aria-pressed="true"] .bars i:nth-child(4) { animation-delay: -0.2s; }
-@keyframes eq { to { height: 12px; } }
+.link:hover { background: rgb(255 255 255 / 0.1); color: var(--ink); }
 
-.hero { grid-area: hero; align-self: center; max-width: min(44rem, 100%); padding-block: 2vh; }
-.hero > * { transition: opacity 0.9s var(--ease), translate 0.9s var(--ease), filter 0.9s var(--ease); }
+.hero { grid-area: hero; align-self: center; max-width: min(42rem, 100%); padding-block: 2vh; }
+.hero > * { transition: opacity 0.8s var(--ease), translate 0.8s var(--ease); }
 .hero > :nth-child(2) { transition-delay: 0.08s; }
 .hero > :nth-child(3) { transition-delay: 0.16s; }
 .hero > :nth-child(4) { transition-delay: 0.24s; }
-@starting-style { .hero > * { opacity: 0; translate: 0 18px; filter: blur(8px); } }
-.eyebrow {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 0 0 clamp(16px, 2.8vh, 30px);
-  color: var(--muted);
-  font: 400 0.72rem/1 var(--mono);
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-}
-.pulse { width: 8px; height: 8px; border-radius: 50%; background: linear-gradient(135deg, var(--cyan), var(--magenta)); box-shadow: 0 0 12px rgb(255 79 216 / 0.8); }
+@starting-style { .hero > * { opacity: 0; translate: 0 14px; } }
+.eyebrow { margin: 0 0 clamp(16px, 2.6vh, 28px); color: var(--ink-soft); font: 400 0.72rem/1 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; }
 h1 {
   margin: 0;
-  color: var(--ink-bright);
-  font: 500 clamp(2.2rem, min(5.2vw, 8vh), 5rem)/0.98 var(--display);
-  letter-spacing: -0.05em;
+  color: var(--ink);
+  font: 650 clamp(2.3rem, min(5.4vw, 8.4vh), 5rem)/1 var(--sans);
+  letter-spacing: -0.045em;
   text-wrap: balance;
 }
-h1 em {
-  display: block;
-  padding-bottom: 0.1em;
-  background: linear-gradient(100deg, var(--cyan), var(--violet), var(--magenta), var(--peach), var(--cyan)) 0 0 / 300% 100%;
-  background-clip: text;
-  color: transparent;
-  font: italic 400 1.14em/1 var(--serif);
-  letter-spacing: -0.02em;
-  animation: iris 12s linear infinite;
-}
-@keyframes iris { to { background-position: 300% 0; } }
-.pitch { max-width: 31rem; margin: clamp(16px, 2.8vh, 30px) 0 0; color: var(--muted); font-size: clamp(1rem, 0.92rem + 0.3vw, 1.15rem); line-height: 1.55; text-wrap: pretty; }
+.pitch { max-width: 32rem; margin: clamp(16px, 2.6vh, 28px) 0 0; color: var(--ink-soft); font-size: clamp(1rem, 0.92rem + 0.3vw, 1.16rem); line-height: 1.55; text-wrap: pretty; }
+.pitch a { color: var(--ink); text-decoration-color: var(--volt); text-decoration-thickness: 2px; text-underline-offset: 4px; }
+.pitch a:hover { color: var(--volt); }
 .soon { margin: clamp(22px, 4vh, 42px) 0 0; color: var(--ink); font: 400 0.9rem/1.4 var(--mono); }
 
 .get { margin-top: clamp(22px, 4.2vh, 44px); }
 .primary {
-  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 14px;
-  padding: 14px 26px 14px 18px;
-  overflow: hidden;
-  border-radius: 18px;
-  background: linear-gradient(100deg, #74f4ff 0%, #ad8fff 50%, #ff70e2 100%);
-  color: #0d0619;
+  padding: 14px 24px 14px 18px;
+  background: var(--volt);
+  color: var(--blue);
   text-decoration: none;
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.6),
-    inset 0 -10px 24px -12px rgb(60 0 90 / 0.45),
-    0 0 0 1px rgb(255 255 255 / 0.2),
-    0 18px 50px -16px rgb(173 143 255 / 0.95),
-    0 0 46px -12px rgb(255 112 226 / 0.7);
-  transition: translate 0.3s var(--ease), box-shadow 0.3s var(--ease), filter 0.3s;
+  box-shadow: 5px 5px 0 var(--night);
+  transition: translate 0.15s, box-shadow 0.15s;
 }
-.primary::after {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(105deg, transparent 35%, rgb(255 255 255 / 0.55) 50%, transparent 65%);
-  content: '';
-  translate: -120% 0;
-  transition: translate 0.8s var(--ease);
-}
-.primary:hover { translate: 0 -2px; filter: saturate(1.15) brightness(1.05); }
-.primary:hover::after { translate: 120% 0; }
+.primary:hover { translate: -2px -2px; box-shadow: 7px 7px 0 var(--night); }
+.primary:active { translate: 3px 3px; box-shadow: 2px 2px 0 var(--night); }
 .primary svg { width: 22px; height: 22px; flex: none; }
-.primary-title { display: block; font: 600 1rem/1.15 var(--display); letter-spacing: -0.02em; }
-.primary-meta { display: block; margin-top: 4px; font: 400 0.72rem/1.3 var(--mono); opacity: 0.72; }
+.primary-title { display: block; font: 650 1.02rem/1.15 var(--sans); letter-spacing: -0.02em; }
+.primary-meta { display: block; margin-top: 4px; font: 400 0.72rem/1.3 var(--mono); opacity: 0.8; }
 .elsewhere { display: none; margin: 0; color: var(--ink); }
-.also { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 18px; }
+.also { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 20px; }
 .also-label { margin-right: 4px; color: var(--dim); font: 400 0.68rem/1 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; }
 .chip {
   display: inline-flex;
   align-items: baseline;
   gap: 6px;
-  padding: 8px 13px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: linear-gradient(180deg, rgb(255 255 255 / 0.08), rgb(255 255 255 / 0.02));
-  backdrop-filter: blur(14px) saturate(1.4);
+  padding: 8px 12px;
+  border: 1px solid var(--line-strong);
+  background: rgb(0 5 110 / 0.35);
   color: var(--ink);
   font-size: 0.86rem;
   text-decoration: none;
-  transition: border-color 0.2s, background 0.2s, box-shadow 0.3s;
+  transition: border-color 0.2s, background 0.2s;
 }
-.chip span { color: var(--muted); font: 400 0.72rem/1 var(--mono); }
-.chip:hover { border-color: rgb(94 242 255 / 0.6); box-shadow: 0 0 22px -8px rgb(94 242 255 / 0.8); }
+.chip span { color: var(--dim); font: 400 0.72rem/1 var(--mono); }
+.chip:hover { border-color: var(--volt); background: rgb(0 5 110 / 0.6); }
 .caveat { max-width: 30rem; margin: 12px 0 0; color: var(--dim); font-size: 0.82rem; }
 html[data-get="elsewhere"] .primary { display: none; }
 html[data-get="elsewhere"] .elsewhere { display: block; }
 html[data-get="elsewhere"] .also-label { display: none; }
 
-/* Liquid glass with a thin iridescent edge. */
-.notes-card, dialog {
-  border: 1px solid transparent;
-  background:
-    linear-gradient(180deg, rgb(255 255 255 / 0.08), rgb(255 255 255 / 0.015)) padding-box,
-    linear-gradient(var(--glass), var(--glass)) padding-box,
-    linear-gradient(130deg, rgb(94 242 255 / 0.6), rgb(154 107 255 / 0.25) 40%, rgb(255 79 216 / 0.55)) border-box;
-}
+/* Panels with a thin title bar, like a window from 1997 kept tidy. */
+.notes-card, dialog { border: 1px solid var(--line-strong); background: var(--panel); }
 .notes-card {
   grid-area: notes;
   align-self: end;
   width: 100%;
-  padding: 18px 18px 12px;
-  border-radius: 22px;
-  backdrop-filter: blur(24px) saturate(1.5);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.12), 0 30px 80px -30px rgb(0 0 0 / 0.8);
+  padding: 0 16px 10px;
+  backdrop-filter: blur(16px) saturate(1.3);
+  box-shadow: 6px 6px 0 rgb(1 4 42 / 0.6);
 }
-.notes-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-.notes-head h2 { margin: 0; color: var(--ink-bright); font: 500 0.86rem/1.2 var(--display); letter-spacing: -0.01em; }
+.notes-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 -16px; padding: 7px 16px 6px; border-bottom: 1px solid var(--line); background: rgb(247 248 250 / 0.08); }
+.notes-head h2 { margin: 0; color: var(--volt); font: 400 0.66rem/1 var(--pixel); letter-spacing: 0.04em; text-transform: uppercase; }
 .excerpt { display: grid; gap: 8px; margin: 12px 0 6px; padding: 0; list-style: none; }
 .excerpt li {
   position: relative;
   display: -webkit-box;
   padding-left: 16px;
   overflow: hidden;
-  color: var(--muted);
+  color: var(--ink-soft);
   font-size: 0.88rem;
   line-height: 1.45;
   overflow-wrap: anywhere;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
-.excerpt li::before { position: absolute; top: 0.68em; left: 0; width: 7px; height: 1px; background: var(--cyan); content: ''; }
+.excerpt li::before { position: absolute; top: 0.55em; left: 0; width: 6px; height: 6px; background: var(--volt); content: ''; }
 .more {
   display: inline-flex;
   align-items: center;
@@ -746,7 +657,7 @@ html[data-get="elsewhere"] .also-label { display: none; }
   padding: 8px 0;
   border: 0;
   background: none;
-  color: var(--ink-bright);
+  color: var(--ink);
   font: 600 0.86rem/1 var(--sans);
   cursor: pointer;
 }
@@ -754,8 +665,8 @@ html[data-get="elsewhere"] .also-label { display: none; }
 .more:hover span { translate: 4px 0; }
 
 .foot { grid-area: foot; align-self: end; display: flex; flex-wrap: wrap; gap: 4px 16px; color: var(--dim); font: 400 0.68rem/1.5 var(--mono); letter-spacing: 0.04em; }
-.foot a { color: var(--muted); text-decoration: none; border-bottom: 1px solid var(--line); }
-.foot a:hover { color: var(--ink-bright); }
+.foot a { color: var(--ink-soft); text-decoration: none; border-bottom: 1px solid var(--line); }
+.foot a:hover { color: var(--ink); }
 
 /* How to play, along the right edge. */
 .hint {
@@ -765,8 +676,8 @@ html[data-get="elsewhere"] .also-label { display: none; }
   z-index: 1;
   margin: 0;
   color: var(--dim);
-  font: 400 0.64rem/1 var(--mono);
-  letter-spacing: 0.22em;
+  font: 400 0.62rem/1 var(--mono);
+  letter-spacing: 0.2em;
   text-transform: uppercase;
   writing-mode: vertical-rl;
   translate: 0 -50%;
@@ -784,34 +695,32 @@ dialog {
   max-height: min(82dvh, 46rem);
   padding: 0;
   overflow: hidden;
-  border-radius: 24px;
-  --glass: rgb(12 7 28 / 0.86);
-  backdrop-filter: blur(30px) saturate(1.5);
-  box-shadow: 0 40px 120px -20px rgb(0 0 0 / 0.9), 0 0 80px -30px rgb(154 107 255 / 0.5);
+  --panel: rgb(1 6 110 / 0.95);
+  backdrop-filter: blur(24px) saturate(1.3);
+  box-shadow: 10px 10px 0 rgb(1 4 42 / 0.7);
   color: var(--ink);
   opacity: 0;
-  scale: 0.97;
   translate: 0 10px;
-  transition: opacity 0.3s var(--ease), scale 0.3s var(--ease), translate 0.3s var(--ease), overlay 0.3s allow-discrete, display 0.3s allow-discrete;
+  transition: opacity 0.25s var(--ease), translate 0.25s var(--ease), overlay 0.25s allow-discrete, display 0.25s allow-discrete;
 }
-dialog[open] { display: flex; flex-direction: column; opacity: 1; scale: 1; translate: 0 0; }
-@starting-style { dialog[open] { opacity: 0; scale: 0.97; translate: 0 10px; } }
-dialog::backdrop { background: rgb(4 2 12 / 0.5); backdrop-filter: blur(6px); }
-.dialog-head { display: flex; align-items: flex-start; gap: 12px; padding: 20px 20px 16px; border-bottom: 1px solid var(--line); }
-.dialog-head h2 { margin: 4px 0 0; color: var(--ink-bright); font: 500 1.2rem/1.2 var(--display); letter-spacing: -0.03em; }
+dialog[open] { display: flex; flex-direction: column; opacity: 1; translate: 0 0; }
+@starting-style { dialog[open] { opacity: 0; translate: 0 10px; } }
+dialog::backdrop { background: rgb(1 4 42 / 0.5); backdrop-filter: blur(4px); }
+.dialog-head { display: flex; align-items: flex-start; gap: 12px; padding: 14px 16px 12px 20px; border-bottom: 1px solid var(--line); background: rgb(247 248 250 / 0.08); }
+.dialog-head .mono { color: var(--volt); font-family: var(--pixel); font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.dialog-head h2 { margin: 6px 0 0; color: var(--ink); font: 650 1.25rem/1.2 var(--sans); letter-spacing: -0.03em; }
 .close {
   display: grid;
   place-items: center;
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   margin-left: auto;
-  border: 1px solid var(--line);
-  border-radius: 50%;
-  background: rgb(255 255 255 / 0.04);
+  border: 1px solid var(--line-strong);
+  background: none;
   color: var(--ink);
   cursor: pointer;
 }
-.close:hover { background: rgb(255 255 255 / 0.1); }
+.close:hover { background: rgb(255 255 255 / 0.12); }
 .close svg { width: 16px; height: 16px; }
 .dialog-body { padding: 18px 20px 22px; overflow-y: auto; overscroll-behavior: contain; }
 .notes-body { line-height: 1.6; }
@@ -819,57 +728,48 @@ dialog::backdrop { background: rgb(4 2 12 / 0.5); backdrop-filter: blur(6px); }
 .notes-body p, .notes-body li { overflow-wrap: anywhere; }
 .notes-body h3, .notes-body h4, .sums-title {
   margin: 22px 0 8px;
-  color: var(--cyan);
-  font: 400 0.7rem/1.3 var(--mono);
-  letter-spacing: 0.14em;
+  color: var(--volt);
+  font: 400 0.66rem/1.3 var(--pixel);
+  letter-spacing: 0.04em;
   text-transform: uppercase;
 }
-.notes-body a, .sums a { color: var(--ink-bright); text-decoration-color: rgb(255 79 216 / 0.6); text-underline-offset: 3px; }
+.notes-body a, .sums a { color: var(--ink); text-decoration-color: var(--volt); text-underline-offset: 3px; }
 .notes-body code { font: 0.85em var(--mono); }
 .sums { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
 .sums th, .sums td { padding: 10px 0; border-top: 1px solid var(--line); text-align: left; vertical-align: top; }
 .sums th { width: 40%; padding-right: 16px; font-weight: 500; }
 .sums th span { display: block; color: var(--dim); font: 400 0.72rem/1.4 var(--mono); }
-.sums code { color: var(--muted); font: 400 0.7rem/1.5 var(--mono); word-break: break-all; }
+.sums code { color: var(--ink-soft); font: 400 0.7rem/1.5 var(--mono); word-break: break-all; }
 .sums-links { display: flex; gap: 18px; margin: 14px 0 0; font-size: 0.86rem; }
 
 @media (max-height: 640px) and (min-width: 761px) {
   .excerpt li:nth-child(n + 2) { display: none; }
 }
 @media (max-width: 1100px) and (min-width: 761px) {
-  .hud [data-area] { display: none; }
+  .lcd [data-track] { display: none; }
 }
 @media (max-width: 760px) {
   body { grid-template: "top" auto "hero" 1fr "notes" auto / minmax(0, 1fr); row-gap: 14px; }
-  .still {
-    background:
-      radial-gradient(60% 30% at 50% 24%, rgb(154 107 255 / 0.4), transparent 70%),
-      radial-gradient(40% 22% at 62% 16%, rgb(94 242 255 / 0.28), transparent 70%),
-      radial-gradient(120% 70% at 50% 25%, #150b31, var(--bg) 72%);
-  }
-  .scrim { background: linear-gradient(180deg, rgb(5 3 12 / 0.25) 0%, rgb(5 3 12 / 0) 12%, rgb(5 3 12 / 0.5) 44%, rgb(5 3 12 / 0.92) 68%); }
-  .hud { gap: 10px; }
-  .hud [data-area], .hud [data-count], .hud .bpm { display: none; }
-  .sound { padding: 10px 12px; }
-  .sound [data-sound-label] { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .scrim { background: linear-gradient(180deg, rgb(0 5 110 / 0) 0%, rgb(0 5 110 / 0) 30%, rgb(0 5 110 / 0.55) 50%, rgb(1 4 60 / 0.9) 72%); }
+  .lcd { gap: 10px; padding: 7px 9px 6px; }
+  .lcd [data-track] { display: none; }
   .links .link-notes { display: none; }
   .hero { align-self: end; padding-block: 0; }
-  h1 { font-size: clamp(2rem, 9.4vw, 3rem); }
+  h1 { font-size: clamp(2.1rem, 9.6vw, 3rem); }
   .pitch { margin-top: 14px; }
   .get { margin-top: 22px; }
   .primary { width: 100%; }
-  .notes-card { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding: 12px 16px; }
-  .notes-head { display: block; }
-  .notes-head .mono { display: block; margin-top: 2px; }
+  .notes-card { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding: 10px 14px; }
+  .notes-head { display: block; margin: 0; padding: 0; border: 0; background: none; }
+  .notes-head .mono { display: block; margin-top: 4px; }
   .excerpt { display: none; }
   .more { margin: 0; white-space: nowrap; }
   .foot { display: none; }
-  .hint { top: 70px; right: 0; left: 0; text-align: center; writing-mode: horizontal-tb; translate: none; letter-spacing: 0.16em; }
-  .frame { inset: 8px; }
+  .hint { top: 72px; right: 0; left: 0; text-align: center; writing-mode: horizontal-tb; translate: none; letter-spacing: 0.14em; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
-  .hud, .hint, .reticle { display: none; }
+  .player, .hint { display: none; }
 }
 `;
 
@@ -886,16 +786,19 @@ function renderPage(manifest, notes) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Brainstrike — a desktop AI workspace</title>
-<meta name="description" content="Brainstrike is a desktop AI workspace for macOS, Windows and Linux. Download the beta.">
-<meta name="theme-color" content="#05030c">
+<meta name="description" content="Brainstrike is a desktop AI app that works inside your folders, on the model keys you already have. Beta for macOS, Windows and Linux.">
+<meta name="theme-color" content="#000cde">
 <meta property="og:title" content="Brainstrike">
-<meta property="og:description" content="A desktop AI workspace for macOS, Windows and Linux.">
+<meta property="og:description" content="I built the AI app I wanted to use. A desktop workspace for macOS, Windows and Linux.">
+<meta property="og:image" content="${SITE_URL}/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="/favicon.ico" sizes="any">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@300..700&family=Geist:wght@400..700&family=Geist+Mono:wght@400..500&family=Instrument+Serif:ital@0;1&display=swap">
+<link rel="preload" href="/fonts/geist.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/silkscreen.woff2" as="font" type="font/woff2" crossorigin>
 <style>${STYLES}</style>
 </head>
 <body>
@@ -903,24 +806,22 @@ function renderPage(manifest, notes) {
 <div class="still" aria-hidden="true"></div>
 <div class="stage" aria-hidden="true"></div>
 <div class="scrim" aria-hidden="true"></div>
-<div class="frame" aria-hidden="true"></div>
-<div class="reticle" aria-hidden="true"><i></i></div>
 <header class="top">
 <a class="brand" href="/">${brandMark}<span>Brainstrike</span></a>
 ${channel}
-<div class="hud"><span aria-hidden="true" data-area>Area 01 · Signal</span><span aria-hidden="true" data-count>00.1</span><span class="bpm" aria-hidden="true">128 BPM</span><button type="button" class="sound" data-sound aria-pressed="false" hidden><span class="bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span data-sound-label>Sound off</span></button></div>
+<div class="player"><button type="button" class="play" data-sound aria-pressed="false" hidden><svg class="start" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11l9-5.5z" fill="currentColor"/></svg><svg class="pause" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 2.5h3v11h-3zm6 0h3v11h-3z" fill="currentColor"/></svg><span class="sr-only" data-sound-label>Play the music</span></button><span class="lcd" aria-hidden="true"><span data-track>01 Daylight</span><span data-time>00:00</span><span class="levels"><i data-level></i><i data-level></i><i data-level></i><i data-level></i><i data-level></i><i data-level></i></span></span></div>
 <nav class="links" aria-label="Site">${notesLink}<a class="link" href="${RELEASES_HUB_URL}">GitHub</a></nav>
 </header>
 <main class="hero">
-<p class="eyebrow"><span class="pulse" data-pulse aria-hidden="true"></span>${release ? release.eyebrow : 'Desktop AI workspace'}</p>
-<h1>A workspace, <em>not a chat window.</em></h1>
-<p class="pitch">Point Brainstrike at your folders, choose exactly what the model sees, and keep every thread, run and edit.</p>
+<p class="eyebrow">${release ? release.eyebrow : 'Desktop AI workspace'}</p>
+<h1>I built the AI app I wanted to use.</h1>
+<p class="pitch">It works inside your folders, shows you every file and tool it touches, and runs on the model keys you already have. This is the beta, so <a href="${ISSUES_URL}">tell me what breaks</a>.</p>
 ${release ? release.get : '<p class="soon">The first beta is on its way.</p>'}
 </main>
 ${release ? release.card : ''}
 ${release ? release.footer : ''}
 ${release ? release.dialog : ''}
-<p class="hint" aria-hidden="true"><span class="fine">Drag to orbit · Scroll to zoom · Click to strike · Hold the core to stretch it</span><span class="touch">Drag · Pinch · Tap</span></p>
+<p class="hint" aria-hidden="true"><span class="fine">Drag to orbit · Scroll to zoom · Click to start a pipe · Pull a pipe to bend it</span><span class="touch">Drag · Pinch · Tap a pipe</span></p>
 <script>${DIALOG_SCRIPT}</script>
 <script type="module" src="/backdrop.js"></script>
 </body>
