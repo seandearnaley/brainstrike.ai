@@ -29,8 +29,11 @@ hook for `main` as the Actions secret `VERCEL_SITE_DEPLOY_HOOK` for that.
 ## The page
 
 - The big button names the visitor's build, from the browser's platform
-  hints; the other builds sit beside it. On a phone the page lists every build
-  and says Brainstrike is a desktop app.
+  hints; the other builds sit beside it. Under it, one line says what that
+  build needs: macOS 12 or later; Windows 10 or 11, the SmartScreen warning
+  of an unsigned installer, and that agent commands run without a sandbox
+  there and no Python is included; for Linux, `chmod +x` on the AppImage. On
+  a phone the page lists every build and says Brainstrike is a desktop app.
 - **Read the release notes** opens a dialog with the notes and every
   download's SHA-256 checksum.
 - `public/backdrop.js` is the live layer: the page is an agent that knows the
