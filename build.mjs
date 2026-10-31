@@ -287,6 +287,15 @@ const SITE_URL = 'https://brainstrike.ai';
 const downloadIcon =
   '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>';
 
+// Umami Cloud (free plan) counts download clicks only: page views stay with
+// Vercel Web Analytics, so automatic page views are off, and only the live
+// domain is counted. Each download link carries one Download event with the
+// build's os, arch and package; the tracker reads them at click time. BST-2405.
+const UMAMI_SCRIPT =
+  '<script defer src="https://cloud.umami.is/script.js" data-website-id="dce480b5-aaab-4052-9e5f-0b74da060c9f" data-auto-pageview="false" data-domains="brainstrike.ai,www.brainstrike.ai"></script>';
+const downloadEvent = (build) =>
+  `data-umami-event="Download" data-umami-event-os="${escapeHtml(build.platform)}" data-umami-event-arch="${escapeHtml(build.architecture)}" data-umami-event-package="${escapeHtml(build.packageId)}"`;
+
 const ARCHITECTURE_ORDER = { linux: ['x64', 'arm64', 'universal'], macos: ['arm64', 'x64', 'universal'], windows: ['x64', 'arm64', 'universal'] };
 
 // Every download, in the order the page lists them, with its labels.
@@ -304,6 +313,7 @@ function downloads(manifest) {
         note: PLATFORM_NOTES[id],
         os: label,
         package: PACKAGE_LABELS[asset.package],
+        packageId: asset.package,
         platform: id,
         size: formatSize(asset.sizeBytes),
         url: asset.url,
@@ -320,13 +330,13 @@ function renderRelease(manifest, notes) {
   const chips = builds
     .map(
       (build) =>
-        `<a class="chip" href="${escapeHtml(build.url)}" data-build="${build.key}" data-agent="chip"${build === primary ? ' hidden' : ''}>${build.os}<span>${escapeHtml(build.arch)}</span></a>`
+        `<a class="chip" href="${escapeHtml(build.url)}" data-build="${build.key}" data-agent="chip" ${downloadEvent(build)}${build === primary ? ' hidden' : ''}>${build.os}<span>${escapeHtml(build.arch)}</span></a>`
     )
     .join('');
   const date = formatDate(publishedAt);
   const rows = builds
     .map(
-      (build) => `<tr><th scope="row"><a href="${escapeHtml(build.url)}">${build.os} ${escapeHtml(build.arch)}</a><span>${build.package} · ${build.size}</span></th><td><code>${build.digest}</code></td></tr>`
+      (build) => `<tr><th scope="row"><a href="${escapeHtml(build.url)}" ${downloadEvent(build)}>${build.os} ${escapeHtml(build.arch)}</a><span>${build.package} · ${build.size}</span></th><td><code>${build.digest}</code></td></tr>`
     )
     .join('\n');
   const buildsJson = JSON.stringify(builds).replaceAll('<', '\\u003c');
@@ -348,7 +358,7 @@ ${rows}
 </dialog>`,
     footer: `<footer class="foot"><span>Signed and notarized for macOS</span><a href="${escapeHtml(sums)}">SHA256SUMS</a><a href="${ISSUES_URL}">Report a bug</a></footer>`,
     get: `<div class="get">
-<a class="primary" href="${escapeHtml(primary.url)}" data-primary data-agent="download">${downloadIcon}<span><span class="primary-title" data-title>Download for ${primary.os}</span><span class="primary-meta" data-meta>${escapeHtml(primary.arch)} · ${primary.package} · ${primary.size}</span></span></a>
+<a class="primary" href="${escapeHtml(primary.url)}" data-primary data-agent="download" ${downloadEvent(primary)}>${downloadIcon}<span><span class="primary-title" data-title>Download for ${primary.os}</span><span class="primary-meta" data-meta>${escapeHtml(primary.arch)} · ${primary.package} · ${primary.size}</span></span></a>
 <p class="elsewhere">For macOS, Windows and Linux.</p>
 <div class="also">${chips}</div>
 <p class="caveat" data-caveat>${escapeHtml(primary.note)}</p>
@@ -370,6 +380,9 @@ const DETECT_SCRIPT = `(() => {
   const show = (build) => {
     if (!build) return;
     primary.href = build.url;
+    primary.dataset.umamiEventOs = build.platform;
+    primary.dataset.umamiEventArch = build.architecture;
+    primary.dataset.umamiEventPackage = build.packageId;
     primary.querySelector('[data-title]').textContent = 'Download for ' + build.os;
     primary.querySelector('[data-meta]').textContent = build.arch + ' · ' + build.package + ' · ' + build.size;
     for (const chip of chips) chip.hidden = chip.dataset.build === build.key;
@@ -704,6 +717,7 @@ function renderPage(manifest, notes) {
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="preload" href="/fonts/instrument-sans.woff2" as="font" type="font/woff2" crossorigin>
 <style>${STYLES}</style>
+${UMAMI_SCRIPT}
 </head>
 <body>
 <canvas class="backdrop" aria-hidden="true"></canvas>
