@@ -350,7 +350,7 @@ ${rows}
 <p class="sums-links"><a href="${escapeHtml(sums)}">SHA256SUMS</a><a href="${escapeHtml(releasePage)}">Release on GitHub</a></p>
 </div>
 </dialog>`,
-    eyebrow: `Desktop AI workspace · v${escapeHtml(version)}`,
+    eyebrow: `Desktop agent workspace · v${escapeHtml(version)}`,
     footer: `<footer class="foot"><span>v${escapeHtml(version)} · ${date}</span><span>macOS builds signed and notarized</span><a href="${escapeHtml(sums)}">SHA256SUMS</a></footer>`,
     get: `<div class="get">
 <a class="primary" href="${escapeHtml(primary.url)}" data-primary>${downloadIcon}<span><span class="primary-title" data-title>Download for ${primary.os}</span><span class="primary-meta" data-meta>${escapeHtml(primary.arch)} · ${primary.package} · ${primary.size}</span></span></a>
@@ -785,11 +785,11 @@ function renderPage(manifest, notes) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Brainstrike — a desktop AI workspace</title>
-<meta name="description" content="Brainstrike is a desktop AI app that works inside your folders, on the model keys you already have. Beta for macOS, Windows and Linux.">
+<title>Brainstrike — agents that show their work</title>
+<meta name="description" content="Brainstrike runs agents inside your folders and shows you every step. A desktop app for macOS, Windows and Linux, in beta.">
 <meta name="theme-color" content="#000cde">
 <meta property="og:title" content="Brainstrike">
-<meta property="og:description" content="I built the AI app I wanted to use. A desktop workspace for macOS, Windows and Linux.">
+<meta property="og:description" content="Agents that show their work. A desktop app for macOS, Windows and Linux.">
 <meta property="og:image" content="${SITE_URL}/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
@@ -813,9 +813,9 @@ ${channel}
 <nav class="links" aria-label="Site">${notesLink}<a class="link" href="${RELEASES_HUB_URL}">GitHub</a></nav>
 </header>
 <main class="hero">
-<p class="eyebrow">${release ? release.eyebrow : 'Desktop AI workspace'}</p>
-<h1>I built the AI app I wanted to use.</h1>
-<p class="pitch">It works inside your folders, shows you every file and tool it touches, and runs on the model keys you already have. This is the beta, so <a href="${ISSUES_URL}">tell me what breaks</a>.</p>
+<p class="eyebrow">${release ? release.eyebrow : 'Desktop agent workspace'}</p>
+<h1>Agents that show their work.</h1>
+<p class="pitch">Brainstrike runs agents inside your folders. They read and edit files, run commands and hand work to each other, and you see every step. Threads are saved on your computer, and it runs on the model keys you already have. It’s in beta: <a href="${ISSUES_URL}">report what breaks</a>.</p>
 ${release ? release.get : '<p class="soon">The first beta is on its way.</p>'}
 </main>
 ${release ? release.card : ''}
