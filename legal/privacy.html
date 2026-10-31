@@ -1,0 +1,65 @@
+<h1>Privacy Policy</h1>
+<p class="effective">Effective {{EFFECTIVE}}</p>
+<p>This policy explains what happens to your information when you use the Brainstrike desktop app (“the app”) and the website at brainstrike.ai (“the site”). Brainstrike is made by {{LEGAL_NAME}} (“we”, “us”).</p>
+<p>The short version: Brainstrike is a local-first app. Your prompts, files and agent activity stay on your computer or go directly to the services you choose to connect. We do not run a server that receives them. We have no user accounts, no ads and no cookies, and the website only counts visits and downloads in aggregate.</p>
+
+<h2 id="on-your-computer">1. What the app keeps on your computer</h2>
+<p>The app stores its data in its own folder on your device:</p>
+<ul>
+<li>macOS: <code>~/Library/Application Support/Brainstrike</code></li>
+<li>Windows: <code>%APPDATA%\Brainstrike</code></li>
+<li>Linux: <code>~/.config/Brainstrike</code></li>
+</ul>
+<p>That folder holds your conversations and agent history, settings, the search index and embeddings built from folders you add, browser permissions you grant the agent, caches, local logs and crash reports.</p>
+<p>API keys, MCP tokens and sign-in records for services you connect are stored in a separate encrypted file in the same folder, protected by your operating system’s keychain (Keychain on macOS, DPAPI on Windows, Secret Service on Linux). The app refuses to store them unencrypted.</p>
+<p>We cannot see any of this data. It never leaves your device unless you send it somewhere, as described below.</p>
+
+<h2 id="ai-providers">2. What goes to the AI providers you configure</h2>
+<p>Brainstrike uses a “bring your own key” model. You choose an AI provider (for example Anthropic, OpenAI, Google, OpenRouter or Amazon Bedrock) and supply your own credentials.</p>
+<p>When you chat or run an agent, the app sends your prompts, the files and folder contents the agent reads, and the results of the tools it uses directly from your computer to that provider. If you turn on search over your folders, the app sends the text of the files you index to the embedding provider you choose (for example Voyage, Cohere, OpenAI or Google) to build the index.</p>
+<p>This data does not pass through any Brainstrike server. Each provider handles it under its own terms and privacy policy, which you accept when you create your account with them. Some providers keep requests for a period, for example to support features like stored responses. Please review the policies of the providers you use.</p>
+
+<h2 id="other-services">3. Other services you connect</h2>
+<p>The app only contacts these when you set them up or ask the agent to use them:</p>
+<ul>
+<li><strong>MCP servers.</strong> Tools you add (for example Linear, GitHub or Atlassian) receive whatever the agent sends them and act under their own terms.</li>
+<li><strong>Web search.</strong> If you turn on a web search tool (for example Tavily or a provider’s built-in search), your search queries go to that service.</li>
+<li><strong>The agent browser.</strong> When the agent opens websites, those sites receive the usual information any browser sends, such as your IP address and the pages requested. The agent browser uses a separate, clean profile with none of your own cookies or logins, asks before visiting a new site, and blocks camera, microphone and location by default.</li>
+<li><strong>Git hosting.</strong> If you connect a Git host, the app talks to it to read or push code on your instruction.</li>
+</ul>
+
+<h2 id="automatic">4. What the app sends on its own</h2>
+<p>The only network request the app makes without you asking is the update check. At launch and about every four hours while running, it asks GitHub (where our releases are published) whether a newer version exists, and downloads it if so. Like any web request, this tells GitHub your IP address, and the request shows your app version, operating system and update channel (stable or beta). It sends no identifier, account or usage data. GitHub’s privacy statement applies to that request.</p>
+<p>The app sends no analytics, telemetry or crash reports. Crash reports are written to your device only. If that ever changes, it will be opt-in, and this policy will say so before that version ships.</p>
+
+<h2 id="support">5. Debug packs and support</h2>
+<p>If you ask for help, you can save a debug pack from the app. It is saved to your computer, and nothing is sent until you choose to share it. Review it before sharing; it can include details about your setup and the conversation it was made from. Crash reports are listed in it by name, time and size only.</p>
+<p>If you write to us through the <a href="/contact">contact form</a> or open an issue on GitHub, we receive what you send, such as your name, email address and the contents of your message, and use it only to respond to you and improve Brainstrike. Issues on GitHub are public.</p>
+<p>The contact form delivers your name, email address and message to our inbox by email through Resend, an email delivery service, which handles it under its own privacy policy. We keep that correspondence only as long as we need it to help you, and you can ask us to delete it.</p>
+
+<h2 id="website">6. The website</h2>
+<p>brainstrike.ai has no sign-up, no ads and no cookies, and its fonts are hosted on the site itself. To understand how many people visit and download Brainstrike, the site uses two cookieless analytics services and GitHub’s download counts. None of them lets us identify you, and we only see totals.</p>
+<ul>
+<li><strong>Page visits (Vercel Web Analytics).</strong> The site is hosted by Vercel, which counts page views for us. For each visit Vercel records the page, the referring site, your approximate location (country, region and city), your browser, operating system and device type, and the time. It tells repeat visitors apart using a hash made from your request, which is discarded after 24 hours. It sets no cookies, stores nothing on your device and does not keep your IP address. Vercel also keeps standard server logs for security and operation. Vercel processes this data for us under its own privacy policy.</li>
+<li><strong>Download clicks (Umami).</strong> When you click a download button, the page sends one anonymous “Download” event to Umami Cloud, with the operating system and processor type of the build you picked (for example macOS on Apple silicon). Along with the event, Umami records the page, the referring site, your browser, operating system, device type and approximate location. Umami sets no cookies and keeps no personal identifiers. We use it only for that event, not to track page views, and the data is kept for 6 months. Umami processes this data for us under its own privacy policy.</li>
+<li><strong>Download counts (GitHub).</strong> Download links go straight to GitHub, which serves the installer files and counts how many times each file is downloaded. We record those totals once a day. GitHub’s privacy statement covers that request.</li>
+<li><strong>Return visits in your browser.</strong> The page’s animated agent counts your return visits in your own browser’s local storage, only so it can react to you. That count never leaves your browser, and you can clear it by clearing this site’s data.</li>
+</ul>
+<p>Because none of this uses cookies or tracks you across other websites, the site does not show a cookie banner.</p>
+
+<h2 id="deleting">7. Deleting your data</h2>
+<p>You can delete what Brainstrike stores with Settings › System › Factory Reset. It erases the app’s conversations, index and embeddings, stored folders list, API keys and tokens, tool settings, caches and interface state from your device. It may keep the app’s diagnostic logs; to remove everything, uninstall the app and delete the folder listed in section 1.</p>
+<p>Factory Reset does not delete your own files, and it cannot delete data you already sent to an AI provider or another service. Contact that service to delete it.</p>
+
+<h2 id="rights">8. Your rights</h2>
+<p>Because we do not collect personal information through the app or keep user accounts, there is usually nothing for us to access, correct or delete. If you have contacted us and want a copy or deletion of that correspondence, or have any privacy question, write to us through the <a href="/contact">contact form</a>. Depending on where you live (for example the EU, UK or California), you may have legal rights over your personal information; we will honor them for any information we hold. You may also complain to your local data protection authority.</p>
+<p>We do not sell or share personal information for advertising.</p>
+
+<h2 id="children">9. Children</h2>
+<p>Brainstrike is not directed at children under 13, and we do not knowingly collect their information.</p>
+
+<h2 id="changes">10. Changes</h2>
+<p>If we change this policy, we will update the date at the top and, for significant changes, mention it in the release notes.</p>
+
+<h2 id="contact">11. Contact</h2>
+<p>{{LEGAL_NAME}}. Write to us through the <a href="/contact">contact form</a>.</p>

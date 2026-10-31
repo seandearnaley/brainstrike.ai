@@ -14,6 +14,13 @@
 // fails the build.
 //
 // Environment:
+//
+// It also writes dist/privacy/index.html and dist/terms/index.html from
+// legal/privacy.html and legal/terms.html, filling in the publisher and
+// effective date below (a {{TOKEN}} left unfilled fails the build), and the
+// contact form at dist/contact/index.html with its no-JavaScript thank-you page
+// at dist/contact/sent/index.html. The form posts to api/contact.js.
+//
 //   RELEASE_MANIFEST_FILE  optional; render this local manifest file instead of
 //                          reading GitHub, to preview the download state. The
 //                          page then links to the notes instead of showing them.
@@ -22,6 +29,26 @@ import path from 'node:path';
 
 const DIST = path.join(import.meta.dirname, 'dist');
 const PUBLIC = path.join(import.meta.dirname, 'public');
+const LEGAL = path.join(import.meta.dirname, 'legal');
+
+// Who publishes the privacy policy and terms, and when they took effect. Change
+// LEGAL_EFFECTIVE whenever either page's wording changes.
+const LEGAL_NAME = 'brainstrike.ai';
+const LEGAL_EFFECTIVE = 'November 1, 2026';
+const LEGAL_PAGES = [
+  {
+    description: 'What Brainstrike and brainstrike.ai do with your information.',
+    file: 'privacy.html',
+    route: 'privacy',
+    title: 'Privacy Policy',
+  },
+  {
+    description: 'The terms for using the Brainstrike desktop app and brainstrike.ai.',
+    file: 'terms.html',
+    route: 'terms',
+    title: 'Terms of Service',
+  },
+];
 
 const MANIFEST_ASSET = 'release-manifest.json';
 const ARTIFACT_BASE_URL =
@@ -346,7 +373,7 @@ ${rows}
 <p class="sums-links"><a href="${escapeHtml(sums)}">SHA256SUMS</a><a href="${escapeHtml(releasePage)}">Release on GitHub</a></p>
 </div>
 </dialog>`,
-    footer: `<footer class="foot"><span>Signed and notarized for macOS</span><a href="${escapeHtml(sums)}">SHA256SUMS</a><a href="${ISSUES_URL}">Report a bug</a></footer>`,
+    footer: `<span>Signed and notarized for macOS</span><a href="${escapeHtml(sums)}">SHA256SUMS</a><a href="${ISSUES_URL}">Report a bug</a>`,
     get: `<div class="get">
 <a class="primary" href="${escapeHtml(primary.url)}" data-primary data-agent="download">${downloadIcon}<span><span class="primary-title" data-title>Download for ${primary.os}</span><span class="primary-meta" data-meta>${escapeHtml(primary.arch)} · ${primary.package} · ${primary.size}</span></span></a>
 <p class="elsewhere">For macOS, Windows and Linux.</p>
@@ -662,14 +689,14 @@ dialog::backdrop { background: rgb(0 3 50 / 0.45); backdrop-filter: blur(4px); }
   .lcd [data-time] { display: none; }
 }
 @media (max-width: 760px) {
-  body { grid-template: "top" auto "hero" 1fr "notes" auto / minmax(0, 1fr); row-gap: 14px; }
+  body { grid-template: "top" auto "hero" 1fr "notes" auto "foot" auto / minmax(0, 1fr); row-gap: 14px; }
   /* Instrument Sans sets "Brainstrike" about 4.9em wide; this fills the column. */
   .wordmark { font-size: calc((100vw - 2 * var(--gutter)) / 5); }
   .hero { align-self: end; padding-block: 0; }
   .get { margin-top: 22px; }
   .primary { width: 100%; }
   .notes-pill { justify-self: start; }
-  .foot { display: none; }
+  .foot > :not(.legal) { display: none; }
   .log { top: 74px; right: var(--gutter); bottom: auto; left: var(--gutter); width: auto; }
   .log li:nth-last-child(n + 3) { display: none; }
 }
@@ -678,6 +705,155 @@ dialog::backdrop { background: rgb(0 3 50 / 0.45); backdrop-filter: blur(4px); }
   .player { display: none; }
 }
 `;
+
+const LEGAL_LINKS =
+  '<a class="legal" href="/privacy">Privacy</a><a class="legal" href="/terms">Terms</a><a class="legal" href="/contact">Contact</a>';
+
+const LEGAL_STYLES = `
+@font-face { font-family: 'Instrument Sans'; src: url('/fonts/instrument-sans.woff2') format('woff2'); font-weight: 400 700; font-stretch: 75% 100%; font-display: swap; }
+@font-face { font-family: 'Geist Mono'; src: url('/fonts/geist-mono.woff2') format('woff2'); font-weight: 400 500; font-display: swap; }
+:root { color-scheme: dark; --blue: #000cde; --deep: #00055f; --volt: #d0fb07; --ink: #f7f8fa; --ink-soft: rgb(247 248 250 / 0.82); --dim: rgb(247 248 250 / 0.6); --line: rgb(247 248 250 / 0.16); --sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif; --mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace; --gutter: clamp(16px, 3.6vw, 56px); }
+* { box-sizing: border-box; }
+html { background: var(--deep); }
+body { margin: 0; padding: 0 var(--gutter) 40px; background: radial-gradient(90% 60% at 80% 0%, #0d1fff, var(--blue) 40%, var(--deep)) fixed; color: var(--ink-soft); font: 400 16px/1.65 var(--sans); -webkit-font-smoothing: antialiased; }
+a { color: var(--ink); text-decoration-color: var(--volt); text-underline-offset: 3px; }
+:focus-visible { outline: 2px solid var(--volt); outline-offset: 3px; border-radius: 6px; }
+::selection { background: var(--volt); color: var(--blue); }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.top { display: flex; align-items: center; gap: 12px; padding: clamp(16px, 2.8vh, 30px) 0; }
+.brand { display: inline-flex; }
+.brand svg { width: 28px; height: 28px; }
+.legal-doc { max-width: 44rem; margin: clamp(12px, 4vh, 48px) 0 0; }
+.legal-doc h1 { margin: 0; color: var(--ink); font: 600 clamp(2rem, 1.4rem + 2.4vw, 3.2rem)/1.05 var(--sans); letter-spacing: -0.04em; }
+.legal-doc .effective { margin: 10px 0 28px; color: var(--volt); font: 400 0.75rem/1.4 var(--mono); }
+.legal-doc h2 { margin: 36px 0 8px; color: var(--ink); font: 600 1.15rem/1.3 var(--sans); letter-spacing: -0.01em; }
+.legal-doc p, .legal-doc li { overflow-wrap: anywhere; }
+.legal-doc strong { color: var(--ink); font-weight: 600; }
+.legal-doc ul { padding-left: 1.2em; }
+.legal-doc li { margin: 6px 0; }
+.legal-doc code { font: 0.85em var(--mono); }
+.legal-doc .lede { margin: 14px 0 28px; }
+.legal-doc .note { margin-top: 28px; color: var(--dim); font-size: 0.9rem; }
+.contact { display: grid; gap: 6px; }
+.contact label { margin-top: 12px; color: var(--ink); font: 500 0.75rem/1.4 var(--mono); letter-spacing: 0.02em; }
+.contact input, .contact textarea { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: rgb(0 5 95 / 0.55); color: var(--ink); font: 400 1rem/1.5 var(--sans); }
+.contact textarea { resize: vertical; }
+.contact input:focus-visible, .contact textarea:focus-visible { border-color: var(--volt); outline-offset: 1px; }
+.contact .trap { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+.contact button { justify-self: start; margin-top: 18px; padding: 10px 18px; border: 0; border-radius: 999px; background: var(--volt); color: var(--blue); font: 600 0.95rem/1.2 var(--sans); cursor: pointer; }
+.contact button:disabled { opacity: 0.6; cursor: progress; }
+.contact .status { min-height: 1.5em; margin: 8px 0 0; font: 400 0.8rem/1.5 var(--mono); }
+.contact .status.ok { color: var(--volt); }
+.contact .status.error { color: #ffb4b4; }
+.foot { display: flex; flex-wrap: wrap; gap: 4px 16px; max-width: 44rem; margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--dim); font: 400 0.68rem/1.5 var(--mono); }
+.foot a { color: var(--ink-soft); text-decoration: none; }
+.foot a:hover { color: var(--ink); }
+`;
+
+function renderSubpage({ body, description, route, script = '', title }) {
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>${title} · Brainstrike</title>
+<meta name="description" content="${escapeHtml(description)}">
+<meta name="theme-color" content="#000cde">
+<link rel="canonical" href="${SITE_URL}/${route}">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<style>${LEGAL_STYLES}</style>
+</head>
+<body>
+<header class="top"><a class="brand" href="/">${brandMark}<span class="sr-only">Brainstrike home</span></a></header>
+<main class="legal-doc">
+${body.trim()}
+</main>
+<footer class="foot"><a href="/">Brainstrike</a>${LEGAL_LINKS}<a href="${ISSUES_URL}">Report a bug</a></footer>
+${script ? `<script>${script}</script>\n` : ''}</body>
+</html>
+`;
+}
+
+function renderLegalPage({ description, file, route, title }) {
+  const body = readFileSync(path.join(LEGAL, file), 'utf8')
+    .replaceAll('{{LEGAL_NAME}}', escapeHtml(LEGAL_NAME))
+    .replaceAll('{{EFFECTIVE}}', escapeHtml(LEGAL_EFFECTIVE));
+  const unfilled = body.match(/\{\{[A-Z_]+\}\}|TODO_[A-Z_]+/u);
+  if (unfilled) fail(`legal/${file} still has ${unfilled[0]}; set it at the top of build.mjs.`);
+  return renderSubpage({ body, description, route, title });
+}
+
+// Posts the form as JSON and shows the answer in place. Without JavaScript the
+// browser posts the form itself and api/contact.js redirects to /contact/sent.
+const CONTACT_SCRIPT = `
+const form = document.querySelector('[data-contact]');
+const status = form.querySelector('[data-status]');
+const button = form.querySelector('button');
+form.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  button.disabled = true;
+  status.className = 'status';
+  status.textContent = 'Sending…';
+  try {
+    const response = await fetch(form.action, {
+      body: JSON.stringify(Object.fromEntries(new FormData(form))),
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      method: 'POST',
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'Your message could not be sent. Please try again later.');
+    form.reset();
+    status.textContent = data.message || 'Thanks, your message is on its way.';
+    status.className = 'status ok';
+  } catch (error) {
+    status.textContent = error instanceof Error && error.message ? error.message : 'Your message could not be sent. Please try again later.';
+    status.className = 'status error';
+  } finally {
+    button.disabled = false;
+  }
+});
+`;
+
+const CONTACT_BODY = `
+<h1>Contact</h1>
+<p class="lede">Questions, feedback or a privacy request? Send us a message and we will reply by email. To report a bug, you can also <a href="${ISSUES_URL}">open an issue on GitHub</a>.</p>
+<form class="contact" action="/api/contact" method="post" data-contact>
+<label for="contact-name">Name</label>
+<input id="contact-name" name="name" type="text" autocomplete="name" maxlength="200" required>
+<label for="contact-email">Email</label>
+<input id="contact-email" name="email" type="email" autocomplete="email" maxlength="320" required>
+<label for="contact-message">Message</label>
+<textarea id="contact-message" name="message" rows="7" minlength="10" maxlength="5000" required></textarea>
+<div class="trap" aria-hidden="true"><label for="contact-company">Company</label><input id="contact-company" name="company" type="text" tabindex="-1" autocomplete="off"></div>
+<button type="submit">Send message</button>
+<p class="status" role="status" aria-live="polite" data-status></p>
+</form>
+<p class="note">We use what you send only to reply to you. See the <a href="/privacy#support">privacy policy</a>.</p>
+`;
+
+const CONTACT_SENT_BODY = `
+<h1>Message sent</h1>
+<p class="lede">Thanks for writing. We will reply to the email address you gave.</p>
+<p><a href="/">Back to Brainstrike</a></p>
+`;
+
+const SUBPAGES = [
+  {
+    body: CONTACT_BODY,
+    description: 'Send the people behind Brainstrike a message.',
+    route: 'contact',
+    script: CONTACT_SCRIPT,
+    title: 'Contact',
+  },
+  {
+    body: CONTACT_SENT_BODY,
+    description: 'Your message to Brainstrike was sent.',
+    route: 'contact/sent',
+    title: 'Message sent',
+  },
+];
 
 function renderPage(manifest, notes) {
   const release = manifest ? renderRelease(manifest, notes) : null;
@@ -722,7 +898,7 @@ ${channel}
 ${release ? release.get : '<p class="soon">The first beta is on its way.</p>'}
 </main>
 ${release ? release.card : ''}
-${release ? release.footer : ''}
+<footer class="foot">${release ? release.footer : ''}${LEGAL_LINKS}</footer>
 ${release ? release.dialog : ''}
 <ol class="log" data-log aria-hidden="true"></ol>
 <script>${DIALOG_SCRIPT}</script>
@@ -741,6 +917,14 @@ try {
   mkdirSync(DIST);
   cpSync(PUBLIC, DIST, { recursive: true });
   writeFileSync(path.join(DIST, 'index.html'), renderPage(manifest, notes));
+  for (const page of LEGAL_PAGES) {
+    mkdirSync(path.join(DIST, page.route));
+    writeFileSync(path.join(DIST, page.route, 'index.html'), renderLegalPage(page));
+  }
+  for (const page of SUBPAGES) {
+    mkdirSync(path.join(DIST, page.route), { recursive: true });
+    writeFileSync(path.join(DIST, page.route, 'index.html'), renderSubpage(page));
+  }
   console.log(
     manifest
       ? `build.mjs: wrote dist/ for Brainstrike ${manifest.latest.version} (${manifest.latest.assets.length} downloads, ${notes ? 'with' : 'without'} release notes).`

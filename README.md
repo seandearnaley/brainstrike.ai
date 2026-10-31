@@ -26,6 +26,31 @@ Vercel builds `main` with `npm run build` and serves `dist/`. A new release
 appears only after the next build; the brainstrike repo holds a Vercel deploy
 hook for `main` as the Actions secret `VERCEL_SITE_DEPLOY_HOOK` for that.
 
+## Privacy policy and terms
+
+`/privacy` and `/terms` are built from `legal/privacy.html` and
+`legal/terms.html`: the page body only, with `{{LEGAL_NAME}}` and
+`{{EFFECTIVE}}` filled in from the constants at the top of `build.mjs`. A token
+left unfilled fails the build. Change `LEGAL_EFFECTIVE` whenever the wording
+changes. Both pages are linked from the footer of every page, on phones too,
+and from the app's Help menu.
+
+## Contact form
+
+`/contact` is a form that posts to `api/contact.js`, a Vercel function deployed
+alongside `dist/`. It emails each message as plain text through Resend, with
+the sender's address as Reply-To. Set these on the Vercel project:
+
+- `RESEND_API_KEY` (required): a Resend API key. Without it the form answers
+  that it isn't working and nothing is sent.
+- `CONTACT_TO` (optional): the inbox that receives messages. It defaults to the
+  one in `api/contact.js`.
+
+Until brainstrike.ai is verified as a sending domain in Resend, mail goes out
+from Resend's shared test sender, which only delivers to the Resend account's
+own address. Run `npm test` for the function's tests. They live in `test/`,
+not `api/`, so Vercel does not deploy them as functions.
+
 ## The page
 
 - The big button names the visitor's build, from the browser's platform
