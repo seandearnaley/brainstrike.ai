@@ -36,6 +36,15 @@ hook for `main` as the Actions secret `VERCEL_SITE_DEPLOY_HOOK` for that.
   a phone the page lists every build and says Brainstrike is a desktop app.
 - **Read the release notes** opens a dialog with the notes and every
   download's SHA-256 checksum.
+- **Watch “Press Approve”**, the pill beside the notes, opens the music
+  video in a dialog: `public/media/press-approve.mp4` (H.264 1080p30, about
+  33 MB, loaded only when played), a poster, and the lyrics as captions
+  (`press-approve.vtt`, off until chosen). The page's own music pauses when
+  the video plays, and closing the dialog stops it. The film's source is the
+  `film/music-video` branch of the brainstrike-film repo; re-encode from its
+  master with `ffmpeg -i press-approve-1080p60.mp4 -vf fps=30 -c:v libx264
+  -preset slower -crf 27 -tune animation -c:a aac -b:a 160k -movflags
+  +faststart press-approve.mp4`.
 - Download clicks are counted with Umami Cloud (free plan, no cookies):
   every download link carries a `Download` event with the build's `os`,
   `arch` and `package`, and the detect script keeps them in step when it

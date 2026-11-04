@@ -425,13 +425,36 @@ const DIALOG_SCRIPT = `(() => {
       });
     }
   }
-  const dialog = document.getElementById('notes');
-  if (dialog && !('closedBy' in HTMLDialogElement.prototype)) {
-    dialog.addEventListener('click', (event) => {
-      if (event.target === dialog) dialog.close();
+  if (!('closedBy' in HTMLDialogElement.prototype)) {
+    for (const dialog of document.querySelectorAll('dialog[closedby="any"]')) {
+      dialog.addEventListener('click', (event) => {
+        if (event.target === dialog) dialog.close();
+      });
+    }
+  }
+  // The music video stops when its dialog closes, and the page's own music
+  // pauses while it plays.
+  const film = document.querySelector('#video video');
+  if (film) {
+    document.getElementById('video').addEventListener('close', () => film.pause());
+    film.addEventListener('play', () => {
+      const sound = document.querySelector('[data-sound]');
+      if (sound && sound.getAttribute('aria-pressed') === 'true') sound.click();
     });
   }
 })();`;
+
+// The music video: a pill beside the release notes, and its dialog. The files
+// live in public/media (H.264 1080p30, a poster, and the lyrics as captions).
+const VIDEO_PILL = `<button type="button" class="notes-pill video-pill" commandfor="video" command="show-modal" data-agent="video"><img src="/media/press-approve-thumb.jpg" alt="" width="48" height="27">Watch “Press Approve”<span aria-hidden="true">2:50</span></button>`;
+const VIDEO_DIALOG = `<dialog id="video" class="video-dialog" closedby="any" aria-labelledby="video-title">
+<div class="dialog-head">
+<div><p class="mono">Music video · 2:50</p><h2 id="video-title">Press Approve</h2></div>
+<button type="button" class="close" commandfor="video" command="close" aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+</div>
+<video controls playsinline preload="none" width="1920" height="1080" poster="/media/press-approve-poster.jpg"><source src="/media/press-approve.mp4" type="video/mp4"><track kind="captions" src="/media/press-approve.vtt" srclang="en" label="Lyrics"></video>
+<p class="video-note">Every line is something a Brainstrike agent did on a real ticket.</p>
+</dialog>`;
 
 const STYLES = `
 @font-face { font-family: 'Instrument Sans'; src: url('/fonts/instrument-sans.woff2') format('woff2'); font-weight: 400 700; font-stretch: 75% 100%; font-display: swap; }
@@ -608,9 +631,9 @@ html[data-get="elsewhere"] .elsewhere { display: block; }
 @keyframes arrive { from { opacity: 0; translate: 0 6px; } }
 html:not([data-backdrop="live"]) .log { display: none; }
 
+/* The pills at the bottom right: the music video, then the release notes. */
+.pills { grid-area: notes; align-self: end; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
 .notes-pill {
-  grid-area: notes;
-  align-self: end;
   display: inline-flex;
   align-items: center;
   gap: 10px;
@@ -628,6 +651,10 @@ html:not([data-backdrop="live"]) .log { display: none; }
 .notes-pill i { width: 6px; height: 6px; border-radius: 50%; background: var(--volt); box-shadow: 0 0 10px var(--volt); }
 .notes-pill span { transition: translate 0.25s var(--ease); }
 .notes-pill:hover span { translate: 3px 0; }
+.video-pill { padding-block: 5px; padding-left: 5px; }
+.video-pill img { width: 48px; height: 27px; border-radius: 999px 6px 6px 999px; object-fit: cover; }
+.video-pill span { color: var(--dim); font: 400 0.68rem/1 var(--mono); }
+.video-pill:hover span { translate: none; }
 
 .foot { grid-area: foot; align-self: end; display: flex; flex-wrap: wrap; gap: 4px 16px; color: var(--dim); font: 400 0.68rem/1.5 var(--mono); }
 .foot a { color: var(--ink-soft); text-decoration: none; }
@@ -670,6 +697,11 @@ dialog::backdrop { background: rgb(0 3 50 / 0.45); backdrop-filter: blur(4px); }
 .sums th span { display: block; color: var(--dim); font: 400 0.72rem/1.4 var(--mono); }
 .sums code { color: var(--ink-soft); font: 400 0.7rem/1.5 var(--mono); word-break: break-all; }
 .sums-links { display: flex; gap: 18px; margin: 14px 0 0; font-size: 0.86rem; }
+/* The video dialog is as wide as the screen allows, the film edge to edge. */
+/* Its width also follows the height, so the head, film and note fit a short laptop screen. */
+.video-dialog { width: min(72rem, calc(100vw - 32px), calc((100dvh - 150px) * 16 / 9)); max-height: none; }
+.video-dialog video { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; background: var(--blue); }
+.video-note { margin: 0; padding: 12px 22px 16px; color: var(--dim); font: 400 0.72rem/1.4 var(--mono); }
 
 @media (max-width: 1100px) and (min-width: 761px) {
   .lcd [data-time] { display: none; }
@@ -681,7 +713,7 @@ dialog::backdrop { background: rgb(0 3 50 / 0.45); backdrop-filter: blur(4px); }
   .hero { align-self: end; padding-block: 0; }
   .get { margin-top: 22px; }
   .primary { width: 100%; }
-  .notes-pill { justify-self: start; }
+  .pills { justify-content: flex-start; }
   .foot { display: none; }
   .log { top: 74px; right: var(--gutter); bottom: auto; left: var(--gutter); width: auto; }
   .log li:nth-last-child(n + 3) { display: none; }
@@ -735,9 +767,10 @@ ${channel}
 <p class="tagline" data-agent="tagline">Agents that show their work.<span class="cursor" aria-hidden="true"></span></p>
 ${release ? release.get : '<p class="soon">The first beta is on its way.</p>'}
 </main>
-${release ? release.card : ''}
+<div class="pills">${VIDEO_PILL}${release ? release.card : ''}</div>
 ${release ? release.footer : ''}
 ${release ? release.dialog : ''}
+${VIDEO_DIALOG}
 <ol class="log" data-log aria-hidden="true"></ol>
 <script>${DIALOG_SCRIPT}</script>
 <script type="module" src="/backdrop.js"></script>

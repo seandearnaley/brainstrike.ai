@@ -377,6 +377,7 @@ function hoverLine(element) {
       notes: 'every line of the changelog is true. I checked.',
       play: 'press it. I made the music.',
       tagline: 'it’s true. watch me.',
+      video: 'that’s me singing. be nice.',
       wordmark: 'that’s my name. well, our name.',
     }[key] ?? null
   );
@@ -814,6 +815,10 @@ function start() {
       }
     });
   }
+  document.querySelector('#video video')?.addEventListener('play', () => {
+    log.say('watching me sing. flattered.', { key: 'video', now: true });
+    setMood('happy', 1.6);
+  });
   document.querySelector('[data-agent="download"]')?.addEventListener('click', () => {
     log.say('downloading… see you in your apps folder.', { key: 'download', now: true });
     setMood('happy', 1.6);
