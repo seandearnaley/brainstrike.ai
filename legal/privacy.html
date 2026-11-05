@@ -10,13 +10,13 @@
 <li>Windows: <code>%APPDATA%\Brainstrike</code></li>
 <li>Linux: <code>~/.config/Brainstrike</code></li>
 </ul>
-<p>That folder holds your conversations and agent history, settings, the search index and embeddings built from folders you add, browser permissions you grant the agent, caches, local logs and crash reports.</p>
+<p>That folder holds your conversations and agent history, settings, a search index of your conversations, browser permissions you grant the agent, caches, local logs and crash reports.</p>
 <p>API keys, MCP tokens and sign-in records for services you connect are stored in a separate encrypted file in the same folder, protected by your operating system’s keychain (Keychain on macOS, DPAPI on Windows, Secret Service on Linux). The app refuses to store them unencrypted.</p>
 <p>We cannot see any of this data. It never leaves your device unless you send it somewhere, as described below.</p>
 
 <h2 id="ai-providers">2. What goes to the AI providers you configure</h2>
 <p>Brainstrike uses a “bring your own key” model. You choose an AI provider (for example Anthropic, OpenAI, Google, OpenRouter or Amazon Bedrock) and supply your own credentials.</p>
-<p>When you chat or run an agent, the app sends your prompts, the files and folder contents the agent reads, and the results of the tools it uses directly from your computer to that provider. If you turn on search over your folders, the app sends the text of the files you index to the embedding provider you choose (for example Voyage, Cohere, OpenAI or Google) to build the index.</p>
+<p>When you chat or run an agent, the app sends your prompts, the files and folder contents the agent reads, and the results of the tools it uses directly from your computer to that provider.</p>
 <p>This data does not pass through any Brainstrike server. Each provider handles it under its own terms and privacy policy, which you accept when you create your account with them. Some providers keep requests for a period, for example to support features like stored responses. Please review the policies of the providers you use.</p>
 
 <h2 id="other-services">3. Other services you connect</h2>
@@ -48,7 +48,7 @@
 <p>Because none of this uses cookies or tracks you across other websites, the site does not show a cookie banner.</p>
 
 <h2 id="deleting">7. Deleting your data</h2>
-<p>You can delete what Brainstrike stores with Settings › System › Factory Reset. It erases the app’s conversations, index and embeddings, stored folders list, API keys and tokens, tool settings, caches and interface state from your device. It may keep the app’s diagnostic logs; to remove everything, uninstall the app and delete the folder listed in section 1.</p>
+<p>You can delete what Brainstrike stores with Settings › System › Factory Reset. It erases the app’s conversations and their search index, stored folders list, API keys and tokens, tool settings, caches and interface state from your device. It may keep the app’s diagnostic logs; to remove everything, uninstall the app and delete the folder listed in section 1.</p>
 <p>Factory Reset does not delete your own files, and it cannot delete data you already sent to an AI provider or another service. Contact that service to delete it.</p>
 
 <h2 id="rights">8. Your rights</h2>
