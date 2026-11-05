@@ -45,6 +45,11 @@ hook for `main` as the Actions secret `VERCEL_SITE_DEPLOY_HOOK` for that.
   master with `ffmpeg -i press-approve-1080p60.mp4 -vf fps=30 -c:v libx264
   -preset slower -crf 27 -tune animation -c:a aac -b:a 160k -movflags
   +faststart press-approve.mp4`.
+- Download clicks are counted with Umami Cloud (free plan, no cookies):
+  every download link carries a `Download` event with the build's `os`,
+  `arch` and `package`, and the detect script keeps them in step when it
+  repoints the big button. Umami's automatic page views are off and only
+  `brainstrike.ai` is counted; page views belong to Vercel Web Analytics.
 - `public/backdrop.js` is the live layer: the page is an agent that knows the
   visitor is there. A small chartreuse drop lives as the dot on the second
   "i" of the wordmark; it hops off, follows the cursor, visits whatever is
