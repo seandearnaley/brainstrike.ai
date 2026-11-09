@@ -102,39 +102,10 @@ Vercel serves it from a second project on this repository:
 "Edit page" links point at this repository on GitHub, so they work for
 visitors only once it is public.
 
-Until the docs project is live, `/notes` below is still the published log.
-Moving over is three changes to the landing page, made together: redirect
-`/notes/feed.xml` to `https://docs.brainstrike.ai/devlog/rss.xml` and
-`/notes/:slug/` to `https://docs.brainstrike.ai/devlog/:slug/`, point the
-header link and the pill at the devlog, then delete `notes/`, `notes.mjs`,
-`test/notes.test.mjs` and the notes rendering in `build.mjs`.
-
-## Notes
-
-`/notes` is the development log: building Brainstrike in the open. Each note
-is a Markdown file in `notes/` named `<YYYY-MM-DD>-<slug>.md`, served at
-`/notes/<slug>/`, and starts with front matter:
-
-```md
----
-title: Building Brainstrike in the open
-date: 2026-11-08
-summary: One or two sentences for the list and the feed.
----
-```
-
-`title` and `date` are required; `summary` is optional. The body is a Markdown
-subset: `#` to `###` headings, paragraphs, `-` and `1.` lists, `>` quotes,
-fenced code, `---` rules, `` `code` ``, `**bold**`, `*italic*`, links and
-images. Put images in `public/notes/media/` and link them as
-`/notes/media/<file>`. Raw HTML shows as text, and links may go only to
-`https:`, a site path, an `#anchor` or `mailto:`. A malformed note fails the
-build instead of publishing half of it.
-
-The build writes the list (newest first), a page per note and an Atom feed at
-`/notes/feed.xml`, which every page advertises. The landing page has a Notes
-link in the header and a pill for the newest note. `notes.mjs` parses and
-renders; `test/notes.test.mjs` covers it.
+The devlog used to live here at `/notes`. `vercel.json` redirects
+`/notes`, `/notes/<slug>/` and `/notes/feed.xml` to the devlog, its posts and
+its feed. Every page's header links to the docs and the devlog, and advertises
+the devlog's feed.
 
 ## Contact form
 
@@ -144,8 +115,9 @@ the sender's address as Reply-To. Set these on the Vercel project:
 
 - `RESEND_API_KEY` (required): a Resend API key. Without it the form answers
   that it isn't working and nothing is sent.
-- `CONTACT_TO` (optional): the inbox that receives messages. It defaults to the
-  one in `api/contact.js`.
+- `CONTACT_TO` (required): the inbox that receives messages. Without it the
+  form answers that it isn't working and nothing is sent. The address is kept
+  out of the repository.
 
 Until brainstrike.ai is verified as a sending domain in Resend, mail goes out
 from Resend's shared test sender, which only delivers to the Resend account's

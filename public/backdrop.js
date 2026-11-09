@@ -375,7 +375,8 @@ function hoverLine(element) {
     {
       github: 'all of me is in there. MIT.',
       source: 'read every line. I don’t mind.',
-      devnotes: 'the build diary. I’m in most of it.',
+      devlog: 'the build diary. I’m in most of it.',
+      docs: 'the manual. my work is shown there too.',
       notes: 'every line of the changelog is true. I checked.',
       play: 'press it. I made the music.',
       tagline: 'it’s true. watch me.',
