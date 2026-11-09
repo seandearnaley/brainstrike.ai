@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { afterEach, describe, it, mock } from 'node:test';
 import { handle, validate } from '../api/contact.js';
 
-const ENV = { RESEND_API_KEY: 're_test' };
+const ENV = { CONTACT_TO: 'inbox@example.com', RESEND_API_KEY: 're_test' };
 const GOOD = { email: 'ada@example.com', message: 'Hello there, this is a test.', name: 'Ada' };
 
 function post(body, { json = true, origin = 'https://brainstrike.ai' } = {}) {
@@ -44,14 +44,15 @@ describe('handle', () => {
     assert.equal(init.headers.Authorization, 'Bearer re_test');
     const sent = JSON.parse(init.body);
     assert.equal(sent.reply_to, GOOD.email);
-    assert.deepEqual(sent.to, ['seandearnaley@outlook.com']);
+    assert.deepEqual(sent.to, ['inbox@example.com']);
     assert.ok(sent.text.includes(GOOD.message));
     assert.equal(sent.html, undefined);
   });
-  it('sends to CONTACT_TO when it is set', async () => {
+  it('answers 503 and sends nothing without an inbox', async () => {
+    mock.method(console, 'error', () => {});
     const send = mock.method(globalThis, 'fetch', async () => new Response('{}', { status: 200 }));
-    await handle(post(GOOD), { ...ENV, CONTACT_TO: 'inbox@example.com' });
-    assert.deepEqual(JSON.parse(send.mock.calls[0].arguments[1].body).to, ['inbox@example.com']);
+    assert.equal((await handle(post(GOOD), { RESEND_API_KEY: 're_test' })).status, 503);
+    assert.equal(send.mock.callCount(), 0);
   });
   it('redirects a form post without JavaScript to the thank-you page', async () => {
     mock.method(globalThis, 'fetch', async () => new Response('{}', { status: 200 }));

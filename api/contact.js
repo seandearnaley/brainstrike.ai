@@ -15,11 +15,13 @@
 //
 // Environment:
 //
-//   RESEND_API_KEY  required to send; without it the form answers 503.
-//   CONTACT_TO      optional; the inbox that receives messages.
+//   RESEND_API_KEY  required to send.
+//   CONTACT_TO      required; the inbox that receives messages.
+//
+// Without either the form answers 503 and nothing is sent. The inbox is never
+// written in this file.
 
 const RESEND_URL = 'https://api.resend.com/emails';
-const DEFAULT_TO = 'seandearnaley@outlook.com';
 // Resend's shared test sender, until brainstrike.ai is verified in Resend.
 const FROM = 'Brainstrike site <onboarding@resend.dev>';
 const MAX_BODY_BYTES = 16_384;
@@ -102,8 +104,9 @@ export async function handle(request, env = process.env) {
   if (result.error) return answer(request, 400, result.error);
 
   const apiKey = env.RESEND_API_KEY;
-  if (!apiKey) {
-    console.error('contact: RESEND_API_KEY is not set, so the message was not sent');
+  const inbox = env.CONTACT_TO;
+  if (!apiKey || !inbox) {
+    console.error(`contact: ${apiKey ? 'CONTACT_TO' : 'RESEND_API_KEY'} is not set, so the message was not sent`);
     return answer(request, 503, 'The contact form is not working right now. Please try again later.');
   }
 
@@ -114,7 +117,7 @@ export async function handle(request, env = process.env) {
         reply_to: result.email,
         subject: `Brainstrike contact form: ${result.name}`,
         text: `Name: ${result.name}\nEmail: ${result.email}\n\n${result.message}\n`,
-        to: [env.CONTACT_TO || DEFAULT_TO],
+        to: [inbox],
       }),
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       method: 'POST',
