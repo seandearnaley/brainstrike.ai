@@ -19,17 +19,28 @@
 // legal/privacy.html and legal/terms.html, filling in the publisher and
 // effective date below (a {{TOKEN}} left unfilled fails the build), and the
 // contact form at dist/contact/index.html with its no-JavaScript thank-you page
-// at dist/contact/sent/index.html. The form posts to api/contact.js.
+// at dist/contact/sent/index.html. The form posts to api/contact.js. The notes in
+// notes/*.md become dist/notes/index.html, a page per note and the Atom feed
+// dist/notes/feed.xml (notes.mjs parses and renders them).
 //
 //   RELEASE_MANIFEST_FILE  optional; render this local manifest file instead of
 //                          reading GitHub, to preview the download state. The
 //                          page then links to the notes instead of showing them.
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { loadNotes, renderFeed } from './notes.mjs';
 
 const DIST = path.join(import.meta.dirname, 'dist');
 const PUBLIC = path.join(import.meta.dirname, 'public');
 const LEGAL = path.join(import.meta.dirname, 'legal');
+const NOTES = path.join(import.meta.dirname, 'notes');
+
+// The notes: building Brainstrike in the open, written by its developer.
+const NOTES_AUTHOR = 'Sean Dearnaley';
+const NOTES_TITLE = 'Brainstrike notes';
+const NOTES_SUBTITLE = 'Building Brainstrike in the open: what changed, what broke and what’s next.';
+const FEED_LINK = `<link rel="alternate" type="application/atom+xml" title="${NOTES_TITLE}" href="/notes/feed.xml">`;
+const NOTES_LINK = '<a class="link" href="/notes/" data-agent="devnotes">Notes</a>';
 
 // Who publishes the privacy policy and terms, and when they took effect. Change
 // LEGAL_EFFECTIVE whenever either page's wording changes.
@@ -309,8 +320,22 @@ const formatDate = (iso) =>
 const MARK =
   'M512 78 A434 434 0 1 1 512 946 A434 434 0 1 1 512 78 Z M618 128 L251 558 L493 558 L358 892 L734 440 L524 440 Z';
 const brandMark = `<svg viewBox="0 0 1024 1024" aria-hidden="true"><path d="${MARK}" fill="#d0fb07" fill-rule="evenodd"/></svg>`;
-const ISSUES_URL = 'https://github.com/seandearnaley/brainstrike-releases/issues';
+// The source: the brainstrike monorepo, public and MIT-licensed. Bugs go to its
+// issues; the builds stay on brainstrike-releases.
+const REPO_URL = 'https://github.com/seandearnaley/brainstrike';
+const LICENSE_URL = `${REPO_URL}/blob/main/LICENSE`;
+const ISSUES_URL = `${REPO_URL}/issues`;
 const SITE_URL = 'https://brainstrike.ai';
+// GitHub's mark (Octicons mark-github, MIT).
+const githubIcon =
+  '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"/></svg>';
+// The header's GitHub pill, on every page.
+const GITHUB_PILL = `<a class="gh" href="${REPO_URL}" data-agent="github">${githubIcon}<span>GitHub</span></a>`;
+const GITHUB_PILL_STYLES = `.gh { display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px 8px 11px; border: 1px solid var(--line-strong, rgb(247 248 250 / 0.32)); border-radius: 999px; background: rgb(0 8 120 / 0.38); backdrop-filter: blur(12px); color: var(--ink); font: 500 0.88rem/1 var(--sans); text-decoration: none; transition: border-color 0.2s, background 0.2s; }
+.gh svg { width: 17px; height: 17px; flex: none; }
+.gh:hover { border-color: var(--volt); background: rgb(255 255 255 / 0.1); }`;
+// Beside the download button: the source, as loud as the download.
+const SOURCE_BUTTON = `<a class="source" href="${REPO_URL}" data-agent="source">${githubIcon}<span><span class="source-title">Open source on GitHub</span><span class="source-meta">MIT license · read every line</span></span></a>`;
 const downloadIcon =
   '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>';
 
@@ -385,7 +410,7 @@ ${rows}
 </dialog>`,
     footer: `<span>Signed and notarized for macOS</span><a href="${escapeHtml(sums)}">SHA256SUMS</a><a href="${ISSUES_URL}">Report a bug</a>`,
     get: `<div class="get">
-<a class="primary" href="${escapeHtml(primary.url)}" data-primary data-agent="download" ${downloadEvent(primary)}>${downloadIcon}<span><span class="primary-title" data-title>Download for ${primary.os}</span><span class="primary-meta" data-meta>${escapeHtml(primary.arch)} · ${primary.package} · ${primary.size}</span></span></a>
+<div class="ctas"><a class="primary" href="${escapeHtml(primary.url)}" data-primary data-agent="download" ${downloadEvent(primary)}>${downloadIcon}<span><span class="primary-title" data-title>Download for ${primary.os}</span><span class="primary-meta" data-meta>${escapeHtml(primary.arch)} · ${primary.package} · ${primary.size}</span></span></a>${SOURCE_BUTTON}</div>
 <p class="elsewhere">For macOS, Windows and Linux.</p>
 <div class="also">${chips}</div>
 <p class="caveat" data-caveat>${escapeHtml(primary.note)}</p>
@@ -568,10 +593,11 @@ html:not([data-backdrop="live"]) .player { display: none; }
 .lcd [data-time] { font-variant-numeric: tabular-nums; }
 .levels { display: inline-flex; align-items: flex-end; gap: 2px; height: 11px; color: var(--volt); }
 .levels i { width: 2px; height: calc(2px + var(--level, 0.2) * 9px); border-radius: 1px; background: currentColor; }
-.links { display: flex; }
+.links { display: flex; align-items: center; gap: 6px; }
 html:not([data-backdrop="live"]) .links { margin-left: auto; }
 .link { padding: 9px 12px; border-radius: 999px; color: var(--ink-soft); font: 500 0.9rem/1 var(--sans); text-decoration: none; transition: color 0.2s, background 0.2s; }
 .link:hover { background: rgb(255 255 255 / 0.08); color: var(--ink); }
+${GITHUB_PILL_STYLES}
 
 .hero { grid-area: hero; align-self: center; max-width: min(56rem, 100%); padding-block: 2vh; }
 .hero > * { transition: opacity 0.9s var(--ease), translate 0.9s var(--ease), filter 0.9s var(--ease); }
@@ -597,6 +623,25 @@ html[data-backdrop="live"][data-agent="out"] [data-home] { box-shadow: inset 0 0
 .soon { margin: clamp(22px, 4vh, 42px) 0 0; color: var(--ink); font: 400 0.9rem/1.4 var(--mono); }
 
 .get { margin-top: clamp(24px, 4.4vh, 44px); }
+.ctas { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+/* The source button: as large as the download, glass instead of chartreuse. */
+.source {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 23px 12px 15px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--glass);
+  backdrop-filter: blur(12px);
+  color: var(--ink);
+  text-decoration: none;
+  transition: translate 0.3s var(--spring), border-color 0.2s, background 0.2s;
+}
+.source:hover { translate: 0 -2px; border-color: var(--volt); background: rgb(0 8 120 / 0.55); }
+.source svg { width: 20px; height: 20px; flex: none; }
+.source-title { display: block; font: 600 1rem/1.15 var(--sans); letter-spacing: -0.01em; }
+.source-meta { display: block; margin-top: 3px; color: var(--ink-soft); font: 400 0.7rem/1.3 var(--mono); }
 .primary {
   display: inline-flex;
   align-items: center;
@@ -634,6 +679,9 @@ html[data-backdrop="live"][data-agent="out"] [data-home] { box-shadow: inset 0 0
 .caveat { max-width: 30rem; margin: 10px 0 0; color: var(--dim); font-size: 0.8rem; }
 html[data-get="elsewhere"] .primary { display: none; }
 html[data-get="elsewhere"] .elsewhere { display: block; }
+/* On a phone the builds come first, then the source. */
+html[data-get="elsewhere"] .get { display: flex; flex-direction: column; }
+html[data-get="elsewhere"] .ctas { order: 1; margin-top: 16px; }
 
 /* What the agent noticed and decided, newest at the bottom. */
 .log {
@@ -678,6 +726,10 @@ html:not([data-backdrop="live"]) .log { display: none; }
 .notes-pill i { width: 6px; height: 6px; border-radius: 50%; background: var(--volt); box-shadow: 0 0 10px var(--volt); }
 .notes-pill span { transition: translate 0.25s var(--ease); }
 .notes-pill:hover span { translate: 3px 0; }
+/* The newest note, its title cut to one line. */
+.note-pill { color: var(--ink); text-decoration: none; }
+.note-pill b { color: var(--volt); font: 500 0.62rem/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
+.note-pill em { max-width: 16rem; overflow: hidden; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
 .video-pill { padding-block: 5px; padding-left: 5px; }
 .video-pill img { width: 48px; height: 27px; border-radius: 999px 6px 6px 999px; object-fit: cover; }
 .video-pill span { color: var(--dim); font: 400 0.68rem/1 var(--mono); }
@@ -739,7 +791,11 @@ dialog::backdrop { background: rgb(0 3 50 / 0.45); backdrop-filter: blur(4px); }
   .wordmark { font-size: calc((100vw - 2 * var(--gutter)) / 5); }
   .hero { align-self: end; padding-block: 0; }
   .get { margin-top: 22px; }
-  .primary { width: 100%; }
+  .primary, .source { width: 100%; }
+  .gh span { display: none; }
+  .gh { padding: 8px; }
+  .lcd { display: none; }
+  .note-pill em { max-width: 13rem; }
   .pills { justify-content: flex-start; }
   .foot > :not(.legal) { display: none; }
   .log { top: 74px; right: var(--gutter); bottom: auto; left: var(--gutter); width: auto; }
@@ -753,6 +809,8 @@ dialog::backdrop { background: rgb(0 3 50 / 0.45); backdrop-filter: blur(4px); }
 
 const LEGAL_LINKS =
   '<a class="legal" href="/privacy">Privacy</a><a class="legal" href="/terms">Terms</a><a class="legal" href="/contact">Contact</a>';
+// The source and its license, first in every footer and shown on phones too.
+const OPEN_LINKS = `<a class="legal" href="${REPO_URL}">Source code</a><a class="legal" href="${LICENSE_URL}">MIT license</a>`;
 
 const LEGAL_STYLES = `
 @font-face { font-family: 'Instrument Sans'; src: url('/fonts/instrument-sans.woff2') format('woff2'); font-weight: 400 700; font-stretch: 75% 100%; font-display: swap; }
@@ -768,6 +826,10 @@ a { color: var(--ink); text-decoration-color: var(--volt); text-underline-offset
 .top { display: flex; align-items: center; gap: 12px; padding: clamp(16px, 2.8vh, 30px) 0; }
 .brand { display: inline-flex; }
 .brand svg { width: 28px; height: 28px; }
+.links { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.link { padding: 9px 12px; border-radius: 999px; color: var(--ink-soft); font: 500 0.9rem/1 var(--sans); text-decoration: none; transition: color 0.2s, background 0.2s; }
+.link:hover { background: rgb(255 255 255 / 0.08); color: var(--ink); }
+${GITHUB_PILL_STYLES}
 .legal-doc { max-width: 44rem; margin: clamp(12px, 4vh, 48px) 0 0; }
 .legal-doc h1 { margin: 0; color: var(--ink); font: 600 clamp(2rem, 1.4rem + 2.4vw, 3.2rem)/1.05 var(--sans); letter-spacing: -0.04em; }
 .legal-doc .effective { margin: 10px 0 28px; color: var(--volt); font: 400 0.75rem/1.4 var(--mono); }
@@ -790,6 +852,23 @@ a { color: var(--ink); text-decoration-color: var(--volt); text-underline-offset
 .contact .status { min-height: 1.5em; margin: 8px 0 0; font: 400 0.8rem/1.5 var(--mono); }
 .contact .status.ok { color: var(--volt); }
 .contact .status.error { color: #ffb4b4; }
+/* The notes: the list, then one note's page. */
+.note-list { margin: 8px 0 0; padding: 0; list-style: none; }
+.note-list li { padding: 18px 0; border-top: 1px solid var(--line); }
+.note-list a { display: grid; gap: 4px; text-decoration: none; }
+.note-list time { color: var(--volt); font: 400 0.75rem/1.4 var(--mono); }
+.note-list .note-title { color: var(--ink); font: 600 1.3rem/1.25 var(--sans); letter-spacing: -0.02em; }
+.note-list a:hover .note-title { text-decoration: underline; text-decoration-color: var(--volt); text-underline-offset: 4px; }
+.note-list p { margin: 6px 0 0; }
+.note .effective { margin-bottom: 32px; }
+.note-body h3 { margin: 28px 0 6px; color: var(--ink); font: 600 1rem/1.3 var(--sans); }
+.note-body ol { padding-left: 1.4em; }
+.note-body img { display: block; max-width: 100%; height: auto; margin: 20px 0; border: 1px solid var(--line); border-radius: 12px; }
+.note-body pre { overflow-x: auto; padding: 14px 16px; border: 1px solid var(--line); border-radius: 10px; background: rgb(0 3 60 / 0.6); font: 400 0.82rem/1.55 var(--mono); }
+.note-body pre code { font: inherit; }
+.note-body blockquote { margin: 20px 0; padding: 2px 0 2px 16px; border-left: 2px solid var(--volt); color: var(--ink); }
+.note-body hr { margin: 32px 0; border: 0; border-top: 1px solid var(--line); }
+.note-nav { display: flex; gap: 18px; max-width: 44rem; margin: 40px 0 0; font: 400 0.8rem/1.5 var(--mono); }
 .foot { display: flex; flex-wrap: wrap; gap: 4px 16px; max-width: 44rem; margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--dim); font: 400 0.68rem/1.5 var(--mono); }
 .foot a { color: var(--ink-soft); text-decoration: none; }
 .foot a:hover { color: var(--ink); }
@@ -801,21 +880,22 @@ function renderSubpage({ body, description, route, script = '', title }) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>${title} · Brainstrike</title>
+<title>${escapeHtml(title)} · Brainstrike</title>
 <meta name="description" content="${escapeHtml(description)}">
 <meta name="theme-color" content="#000cde">
 <link rel="canonical" href="${SITE_URL}/${route}">
 <link rel="icon" href="/favicon.ico" sizes="any">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+${FEED_LINK}
 <style>${LEGAL_STYLES}</style>
 </head>
 <body>
-<header class="top"><a class="brand" href="/">${brandMark}<span class="sr-only">Brainstrike home</span></a></header>
+<header class="top"><a class="brand" href="/">${brandMark}<span class="sr-only">Brainstrike home</span></a><nav class="links" aria-label="Site">${NOTES_LINK}${GITHUB_PILL}</nav></header>
 <main class="legal-doc">
 ${body.trim()}
 </main>
-<footer class="foot"><a href="/">Brainstrike</a>${LEGAL_LINKS}<a href="${ISSUES_URL}">Report a bug</a></footer>
+<footer class="foot"><a href="/">Brainstrike</a>${OPEN_LINKS}${LEGAL_LINKS}<a href="${ISSUES_URL}">Report a bug</a></footer>
 ${script ? `<script>${script}</script>\n` : ''}</body>
 </html>
 `;
@@ -900,7 +980,48 @@ const SUBPAGES = [
   },
 ];
 
-function renderPage(manifest, notes) {
+const noteDate = (note) => `<time datetime="${note.date}">${formatDate(`${note.date}T00:00:00Z`)}</time>`;
+
+// /notes: every note, newest first, with its date and summary.
+function renderNotesIndex(notes) {
+  const list = notes.length
+    ? `<ol class="note-list">\n${notes
+        .map(
+          (note) =>
+            `<li><a href="/notes/${note.slug}/">${noteDate(note)}<span class="note-title">${escapeHtml(note.title)}</span></a>${note.summary ? `<p>${note.summary}</p>` : ''}</li>`
+        )
+        .join('\n')}\n</ol>`
+    : '<p>No notes yet.</p>';
+  return renderSubpage({
+    body: `<h1>Notes</h1>\n<p class="lede">${escapeHtml(NOTES_SUBTITLE)} <a href="/notes/feed.xml">Follow the feed</a>.</p>\n${list}`,
+    description: NOTES_SUBTITLE,
+    route: 'notes/',
+    title: 'Notes',
+  });
+}
+
+// /notes/<slug>: one note.
+function renderNotePage(note) {
+  return renderSubpage({
+    body: `<article class="note">
+<h1>${escapeHtml(note.title)}</h1>
+<p class="effective">${noteDate(note)} · ${escapeHtml(NOTES_AUTHOR)}</p>
+<div class="note-body">
+${note.html}
+</div>
+</article>
+<p class="note-nav"><a href="/notes/">← All notes</a><a href="/notes/feed.xml">Feed</a></p>`,
+    description: note.summary ? note.summary.replace(/<[^>]+>/gu, '') : NOTES_SUBTITLE,
+    route: `notes/${note.slug}/`,
+    title: note.title,
+  });
+}
+
+// The landing page's pill for the newest note.
+const notePill = (note) =>
+  `<a class="notes-pill note-pill" href="/notes/${note.slug}/" data-agent="devnotes"><b>Notes</b><em>${escapeHtml(note.title)}</em><span aria-hidden="true">→</span></a>`;
+
+function renderPage(manifest, notes, latestNote) {
   const release = manifest ? renderRelease(manifest, notes) : null;
   const label = manifest ? CHANNEL_LABELS[manifest.channel] : null;
   const channel = label ? `<span class="channel">${label}</span>` : '';
@@ -910,10 +1031,10 @@ function renderPage(manifest, notes) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Brainstrike — agents that show their work</title>
-<meta name="description" content="Brainstrike runs agents inside your folders and shows you every step. A desktop app for macOS, Windows and Linux, in beta.">
+<meta name="description" content="Brainstrike runs agents inside your folders and shows you every step. A free, open-source desktop app for macOS, Windows and Linux, in beta.">
 <meta name="theme-color" content="#000cde">
 <meta property="og:title" content="Brainstrike">
-<meta property="og:description" content="Agents that show their work. A desktop app for macOS, Windows and Linux.">
+<meta property="og:description" content="Agents that show their work. Open source, for macOS, Windows and Linux.">
 <meta property="og:url" content="${SITE_URL}/">
 <meta property="og:type" content="website">
 <meta property="og:image" content="${SITE_URL}/og.png">
@@ -924,6 +1045,7 @@ function renderPage(manifest, notes) {
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="preload" href="/fonts/instrument-sans.woff2" as="font" type="font/woff2" crossorigin>
+${FEED_LINK}
 <style>${STYLES}</style>
 ${UMAMI_SCRIPT}
 </head>
@@ -936,15 +1058,15 @@ ${UMAMI_SCRIPT}
 <a class="brand" href="/">${brandMark}<span class="sr-only">Brainstrike</span></a>
 ${channel}
 <div class="player"><button type="button" class="play" data-sound data-agent="play" aria-pressed="false" hidden><svg class="start" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11l9-5.5z" fill="currentColor"/></svg><svg class="pause" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 2.5h3v11h-3zm6 0h3v11h-3z" fill="currentColor"/></svg><span class="sr-only" data-sound-label>Play the music</span></button><span class="lcd" aria-hidden="true"><span data-time>00:00</span><span class="levels"><i data-level></i><i data-level></i><i data-level></i><i data-level></i><i data-level></i><i data-level></i></span></span></div>
-<nav class="links" aria-label="Site"><a class="link" href="${RELEASES_HUB_URL}" data-agent="github">GitHub</a></nav>
+<nav class="links" aria-label="Site">${NOTES_LINK}${GITHUB_PILL}</nav>
 </header>
 <main class="hero">
 <h1 class="wordmark" aria-label="Brainstrike" data-agent="wordmark"><span aria-hidden="true">Bra<span class="i">ı<i class="dot"></i></span>nstr<span class="i">ı<i class="dot" data-home></i></span>ke</span></h1>
 <p class="tagline" data-agent="tagline">Agents that show their work.<span class="cursor" aria-hidden="true"></span></p>
-${release ? release.get : '<p class="soon">The first beta is on its way.</p>'}
+${release ? release.get : `<p class="soon">The first beta is on its way.</p><div class="get"><div class="ctas">${SOURCE_BUTTON}</div></div>`}
 </main>
-<div class="pills">${VIDEO_PILL}${release ? release.card : ''}</div>
-<footer class="foot">${release ? release.footer : ''}${LEGAL_LINKS}</footer>
+<div class="pills">${latestNote ? notePill(latestNote) : ''}${VIDEO_PILL}${release ? release.card : ''}</div>
+<footer class="foot">${OPEN_LINKS}${release ? release.footer : ''}${LEGAL_LINKS}</footer>
 ${release ? release.dialog : ''}
 ${VIDEO_DIALOG}
 <ol class="log" data-log aria-hidden="true"></ol>
@@ -960,10 +1082,21 @@ try {
   const { manifest, notes } = localFile
     ? { manifest: validateManifest(parseJson(readFileSync(localFile, 'utf8'), localFile), localFile), notes: null }
     : await loadPublishedRelease();
+  const devNotes = loadNotes(NOTES);
   rmSync(DIST, { force: true, recursive: true });
   mkdirSync(DIST);
   cpSync(PUBLIC, DIST, { recursive: true });
-  writeFileSync(path.join(DIST, 'index.html'), renderPage(manifest, notes));
+  writeFileSync(path.join(DIST, 'index.html'), renderPage(manifest, notes, devNotes[0] ?? null));
+  mkdirSync(path.join(DIST, 'notes'), { recursive: true });
+  writeFileSync(path.join(DIST, 'notes', 'index.html'), renderNotesIndex(devNotes));
+  writeFileSync(
+    path.join(DIST, 'notes', 'feed.xml'),
+    renderFeed(devNotes, { author: NOTES_AUTHOR, siteUrl: SITE_URL, subtitle: NOTES_SUBTITLE, title: NOTES_TITLE })
+  );
+  for (const note of devNotes) {
+    mkdirSync(path.join(DIST, 'notes', note.slug));
+    writeFileSync(path.join(DIST, 'notes', note.slug, 'index.html'), renderNotePage(note));
+  }
   for (const page of LEGAL_PAGES) {
     mkdirSync(path.join(DIST, page.route));
     writeFileSync(path.join(DIST, page.route, 'index.html'), renderLegalPage(page));
@@ -974,7 +1107,7 @@ try {
   }
   console.log(
     manifest
-      ? `build.mjs: wrote dist/ for Brainstrike ${manifest.latest.version} (${manifest.latest.assets.length} downloads, ${notes ? 'with' : 'without'} release notes).`
+      ? `build.mjs: wrote dist/ for Brainstrike ${manifest.latest.version} (${manifest.latest.assets.length} downloads, ${notes ? 'with' : 'without'} release notes, ${devNotes.length} ${devNotes.length === 1 ? 'note' : 'notes'}).`
       : `build.mjs: wrote dist/; no published release has ${MANIFEST_ASSET} yet, so the page says the first beta is coming soon.`
   );
 } catch (error) {

@@ -35,6 +35,33 @@ left unfilled fails the build. Change `LEGAL_EFFECTIVE` whenever the wording
 changes. Both pages are linked from the footer of every page, on phones too,
 and from the app's Help menu.
 
+## Notes
+
+`/notes` is the development log: building Brainstrike in the open. Each note
+is a Markdown file in `notes/` named `<YYYY-MM-DD>-<slug>.md`, served at
+`/notes/<slug>/`, and starts with front matter:
+
+```md
+---
+title: Building Brainstrike in the open
+date: 2026-11-08
+summary: One or two sentences for the list and the feed.
+---
+```
+
+`title` and `date` are required; `summary` is optional. The body is a Markdown
+subset: `#` to `###` headings, paragraphs, `-` and `1.` lists, `>` quotes,
+fenced code, `---` rules, `` `code` ``, `**bold**`, `*italic*`, links and
+images. Put images in `public/notes/media/` and link them as
+`/notes/media/<file>`. Raw HTML shows as text, and links may go only to
+`https:`, a site path, an `#anchor` or `mailto:`. A malformed note fails the
+build instead of publishing half of it.
+
+The build writes the list (newest first), a page per note and an Atom feed at
+`/notes/feed.xml`, which every page advertises. The landing page has a Notes
+link in the header and a pill for the newest note. `notes.mjs` parses and
+renders; `test/notes.test.mjs` covers it.
+
 ## Contact form
 
 `/contact` is a form that posts to `api/contact.js`, a Vercel function deployed
@@ -53,6 +80,15 @@ not `api/`, so Vercel does not deploy them as functions.
 
 ## The page
 
+- Brainstrike is open source (MIT), and the page says so as loudly as it
+  offers the download. Beside the big button sits **Open source on GitHub**,
+  the same size in glass, linking to
+  [seandearnaley/brainstrike](https://github.com/seandearnaley/brainstrike).
+  The header of every page carries a GitHub pill (just the mark on a phone),
+  and every footer starts with the source code and the MIT license. On a
+  phone the source button comes after the list of builds. **Report a bug**
+  opens the source repository's issues; the builds stay on
+  brainstrike-releases.
 - The big button names the visitor's build, from the browser's platform
   hints; the other builds sit beside it. Under it, one line says what that
   build needs: macOS 12 or later; Windows 10 or 11, the SmartScreen warning
