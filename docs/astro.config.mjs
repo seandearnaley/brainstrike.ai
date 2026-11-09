@@ -26,15 +26,29 @@ export default defineConfig({
       routeMiddleware: './src/routeData.ts',
       head: [{ tag: 'meta', attrs: { name: 'theme-color', content: '#000cde' } }],
 
-      // TODO(human): shape the sidebar.
-      // Each entry is a group: { label, items } where items are page slugs under
-      // src/content/docs (for example 'start/install'), or { label, autogenerate:
-      // { directory: 'providers' } } to list a whole folder in file order.
-      // Add `collapsed: true` to a group that should start closed.
-      // The devlog is not listed here: the blog plugin gives it its own header
-      // link and sidebar.
+      // The sidebar, top to bottom: get going, do things, check what the app
+      // does with your data, then read the code. Each item is a page slug
+      // under src/content/docs. The devlog is not listed: the blog plugin
+      // gives it its own header link and sidebar.
       sidebar: [
-        { label: 'Start here', items: ['start/overview', 'start/install'] },
+        { label: 'Start here', items: ['start/overview', 'start/install', 'start/first-run'] },
+        {
+          label: 'Guides',
+          items: [
+            'guides/providers',
+            'guides/models-faq',
+            'guides/approvals',
+            'guides/changes',
+            'guides/sandbox',
+            'guides/mcp',
+            'guides/project-config',
+          ],
+        },
+        {
+          label: 'Privacy and security',
+          items: ['reference/privacy', 'reference/security'],
+        },
+        { label: 'Help', items: ['reference/troubleshooting'] },
         {
           label: 'Read the code',
           items: [

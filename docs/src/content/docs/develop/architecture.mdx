@@ -18,11 +18,11 @@ Boxes outlined in the accent colour are links. Each opens the package, contract 
   caption="Everything Brainstrike reaches outside itself. Model calls go only to the provider you connected."
 />
 
-- **Your folders.** The agent reads, edits and runs commands only in folders you opened. A folder's own instructions, skills and hooks load only after you trust it. Search is live `ripgrep` over the files; there is no background index of your code.
+- **Your folders.** The agent reads, edits and runs commands only in folders you opened. A folder's own instructions, skills, slash commands and subagents load only after you trust it, and its hooks need a separate approval. Search is live `ripgrep` over the files; there is no background index of your code.
 - **A model provider.** OpenAI, Anthropic, Google AI Studio, OpenRouter or Amazon Bedrock, with your key. No model runs locally.
 - **MCP servers.** Local ones are child processes that speak over stdio. Remote ones use Streamable HTTP or SSE.
 - **The web.** Agent browser tabs can connect only through a proxy that checks the address each connection resolves to, so a public page cannot redirect the agent onto your local network.
-- **GitHub releases.** The app checks for updates there. It sends no telemetry.
+- **GitHub releases.** The app checks for updates there. It sends no telemetry. [Privacy and your data](/reference/privacy/) lists every request the app makes.
 
 ## What runs on your machine
 
@@ -31,7 +31,7 @@ Boxes outlined in the accent colour are links. Each opens the package, contract 
   caption="The processes of a running app. Arrows show who starts or calls whom."
 />
 
-Main starts the agent host and the egress proxy. The renderer talks to the host directly, without going through Main. Everything that touches your files or runs a program is the host or one of its children.
+Main starts the agent host and the egress proxy. The renderer talks to the host directly, without going through Main. The agent's tools, its commands, git and the terminals all run in the host or in one of its children.
 
 ### Inside the agent host
 
@@ -74,6 +74,6 @@ The host's clients are the app's windows and, when it runs headless, a command-l
 - **Large payloads move to blob files** named by their content, with a preview left in the row.
 - **The search index is a projection.** If its schema changes or it is damaged, the host deletes it and rebuilds it from the state database.
 - **Damage is contained.** A database that fails its integrity check opens read-only and the app says so. It is never deleted or replaced for you.
-- **Credentials are separate.** Provider keys and MCP tokens sit in one file, each value sealed by the operating system's credential store. See [desktop security](https://github.com/seandearnaley/brainstrike/blob/main/apps/desktop/SECURITY.md).
+- **Credentials are separate.** Provider keys and MCP tokens sit in one file. Each value is sealed with a key that the operating system's credential store holds. See the [Security model](/reference/security/).
 
 The decision and its measurements are in [ADR-0011](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0011-run-log-and-state-store.md).

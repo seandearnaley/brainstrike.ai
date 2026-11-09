@@ -24,7 +24,7 @@ Run the installer. It is not code-signed yet, so Microsoft Defender SmartScreen 
 The Windows build has limits the other builds do not:
 
 - Commands the agent runs are **not sandboxed**. The approval card says so each time. Use _Ask for approval_ if that matters to you.
-- No Python is bundled, so the agent's Python tool is not offered.
+- The agent's Python tool is not offered. It runs only inside the sandbox, and no Python is bundled.
 - Factory reset is not available in this version.
 
 ## Linux
@@ -36,7 +36,7 @@ chmod +x Brainstrike-*.AppImage
 ./Brainstrike-*.AppImage
 ```
 
-The agent's commands run inside a sandbox that needs three system packages. Without them Brainstrike refuses to run the command; it never falls back to running it unsandboxed.
+The agent's commands run inside a sandbox that needs three system packages. Without them Brainstrike refuses to run the command. It never switches to running it unsandboxed by itself.
 
 ```sh
 # Debian and Ubuntu
@@ -50,6 +50,8 @@ Two more things to know:
 
 - **Keys need a keyring.** Brainstrike stores provider keys through the Secret Service, which GNOME Keyring and KWallet provide. It refuses to store them as plain text.
 - **Ubuntu restricts user namespaces.** Recent Ubuntu releases use AppArmor to limit unprivileged user namespaces, which the sandbox depends on. If commands are refused with a message about the sandbox namespace, see [Ubuntu's AppArmor guidance](https://documentation.ubuntu.com/security/security-features/privilege-restriction/apparmor/). Brainstrike does not change host security settings for you.
+
+[Sandbox and platform support](/guides/sandbox/) has the full list of what differs between platforms.
 
 ## Check your download
 
@@ -73,10 +75,11 @@ Get-FileHash .\Brainstrike-*.exe -Algorithm SHA256
 Brainstrike uses hosted models with your own key. On first launch the message box is disabled until a provider is connected.
 
 1. Open **Settings**, then **Providers**.
-2. Choose OpenAI, Anthropic, Google AI Studio, OpenRouter or Amazon Bedrock.
-3. Paste the key. It is encrypted with your operating system's credential store.
+2. Open the card for OpenAI, Anthropic, Google AI Studio, OpenRouter or Amazon Bedrock.
+3. Choose **Set**, paste the key and choose **Save**. It is encrypted with your operating system's credential store.
+4. Turn on the models you want to use.
 
-Then open a folder and send your first message.
+Then open a folder and send your first message. [First run](/start/first-run/) walks through it, and [Connect a provider](/guides/providers/) covers each provider in detail.
 
 ## Updates
 
