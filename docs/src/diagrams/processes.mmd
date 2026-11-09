@@ -1,0 +1,14 @@
+flowchart TB
+  main[Main] -- starts --> host[Agent host]
+  main -- starts --> egress[Egress proxy]
+  renderer[Renderer] -- JSON-RPC --> host
+  host --> fence[Sandboxed commands]
+  host --> mcp[MCP servers]
+  host --> native[git, ripgrep, terminals]
+  click main href "https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0029-main-is-a-launcher.md" "ADR-0029"
+  click renderer href "https://github.com/seandearnaley/brainstrike/tree/main/packages/app-shell" "packages/app-shell"
+  click egress href "https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0025-agent-browsing-egress-proxy.md" "ADR-0025"
+  click host href "https://github.com/seandearnaley/brainstrike/tree/main/packages/agent-host" "packages/agent-host"
+  click fence href "https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/code-execution.md" "Code execution contract"
+  click mcp href "https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/assistant-providers.md" "Providers and MCP contract"
+  click native href "https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0030-one-process-supervisor.md" "ADR-0030"

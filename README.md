@@ -68,8 +68,19 @@ npm run build    # writes docs/dist
   `title` and `date` are required. `draft: true` keeps a post out of the
   production build while it still shows in `npm run dev`. The feed is
   `/devlog/rss.xml`.
-- **The build fails** on a broken internal link or heading anchor, and on
-  front matter that does not match the schema.
+- **A diagram** is a Mermaid file in `docs/src/diagrams/`, drawn at build time
+  by [pele](https://pele.run), the renderer the app uses in a thread. A page
+  ends in `.mdx`, imports the file with `?raw` and passes it to `<Diagram>`
+  (see `docs/src/content/docs/develop/architecture.mdx`). The result is inline
+  SVG with no JavaScript, coloured by the variables in `brand.css`. Give a
+  node a link with `click <id> href "<url>"`; linked boxes are outlined in the
+  accent colour. Keep a diagram under about 620 wide so it shows at full size,
+  and split one that grows past that into two levels.
+- **Read the code** (`docs/src/content/docs/develop/`) maps the app's source
+  and links into `seandearnaley/brainstrike` on `main`. Those links are not
+  checked by the build, so check them when files move there.
+- **The build fails** on a broken internal link or heading anchor, on invalid
+  Mermaid, and on front matter that does not match the schema.
 - **Every page gets** a social card at `/og/<path>.png`, an entry in the
   sitemap and in the Pagefind search index. `llms.txt`, `llms-small.txt` and
   `llms-full.txt` cover the docs and leave the devlog out.

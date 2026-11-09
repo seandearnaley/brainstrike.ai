@@ -1,0 +1,28 @@
+sequenceDiagram
+  actor You
+  participant UI as Renderer
+  participant Host as Agent host
+  participant Log as Run log
+  participant Model as Model provider
+  participant Tool as Tool
+  You->>UI: Send a message
+  UI->>Host: Start a run
+  Host->>Log: Commit the message and the run's snapshot
+  Host->>Model: Stream a response
+  loop Each step
+    Model-->>Host: Text, reasoning, tool calls
+    Host->>Log: Commit
+    Host-->>UI: Publish what was committed
+    opt A call needs your decision
+      Host->>Log: Commit the request
+      Host-->>UI: Approval card
+      You->>UI: Allow or deny
+      UI->>Host: Your answer
+      Host->>Log: Commit the answer
+    end
+    Host->>Tool: Run the call
+    Tool-->>Host: Result
+    Host->>Log: Commit the result
+  end
+  Host->>Log: Commit the outcome
+  Host-->>UI: Turn finished, with what it changed

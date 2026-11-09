@@ -1,0 +1,125 @@
+---
+title: Packages
+description: A map of the Brainstrike monorepo. Which packages run in the interface, which in the agent host, and what each one owns.
+---
+
+import Diagram from '../../../components/Diagram.astro';
+import packages from '../../../diagrams/packages.mmd?raw';
+
+The repository is a pnpm workspace: one app, [`apps/desktop`](https://github.com/seandearnaley/brainstrike/tree/main/apps/desktop), and 42 packages under [`packages/`](https://github.com/seandearnaley/brainstrike/tree/main/packages). Every package is consumed as TypeScript source through its `exports`. None is built to a `dist` folder except the two native add-ons and two test tools.
+
+## The layers
+
+<Diagram
+  code={packages}
+  caption="The main packages and the direction they depend in. Each box opens its folder."
+/>
+
+The rule the picture shows: **interface packages and host packages never import each other.** They meet at the contract packages, and at run time they talk over a message port. `apps/desktop` is the only place that composes both sides.
+
+That boundary is why the host can run without Electron, and why host code is tested as plain Node.
+
+## Every package
+
+### The app
+
+| Package | What it owns |
+| --- | --- |
+| [`apps/desktop`](https://github.com/seandearnaley/brainstrike/tree/main/apps/desktop) | The Electron app: main process, preload, renderer entry, packaging and the end-to-end tests. See its [README](https://github.com/seandearnaley/brainstrike/blob/main/apps/desktop/README.md), [security notes](https://github.com/seandearnaley/brainstrike/blob/main/apps/desktop/SECURITY.md) and [release process](https://github.com/seandearnaley/brainstrike/blob/main/apps/desktop/RELEASES.md). |
+
+### Interface
+
+| Package | What it owns |
+| --- | --- |
+| [`app-shell`](https://github.com/seandearnaley/brainstrike/tree/main/packages/app-shell) | React layout and feature composition for the app. It wires the interface to capabilities passed in; it is not a second runtime or storage owner. |
+| [`assistant-ui`](https://github.com/seandearnaley/brainstrike/tree/main/packages/assistant-ui) | The assistant panel: thread, composer, tool rendering and session-scoped stores. |
+| [`file-explorer-ui`](https://github.com/seandearnaley/brainstrike/tree/main/packages/file-explorer-ui) | Explorer composition, tree grid, file tabs and token status. |
+| [`file-explorer`](https://github.com/seandearnaley/brainstrike/tree/main/packages/file-explorer) | Explorer state and actions, independent of any interface. |
+| [`file-explorer-hooks`](https://github.com/seandearnaley/brainstrike/tree/main/packages/file-explorer-hooks) | React hooks for filesystem access, selection, loading and watcher health. |
+| [`workspace-search`](https://github.com/seandearnaley/brainstrike/tree/main/packages/workspace-search) | The Explorer's Search tab: live text search over the workspace. |
+| [`settings-ui`](https://github.com/seandearnaley/brainstrike/tree/main/packages/settings-ui) | Settings and status screens. |
+| [`mcp-app-host-ui`](https://github.com/seandearnaley/brainstrike/tree/main/packages/mcp-app-host-ui) | The renderer surface that hosts MCP Apps. |
+| [`ui`](https://github.com/seandearnaley/brainstrike/tree/main/packages/ui) | Shared components: shadcn and Radix primitives, tree table, tab strip, Markdown, code and diagram surfaces, theme assets. |
+| [`hooks`](https://github.com/seandearnaley/brainstrike/tree/main/packages/hooks) | Small shared React hooks. |
+| [`context-actions`](https://github.com/seandearnaley/brainstrike/tree/main/packages/context-actions) | The headless context action system: targets, actions, a registry and capability gating. |
+
+### Interface state
+
+| Package | What it owns |
+| --- | --- |
+| [`app-state`](https://github.com/seandearnaley/brainstrike/tree/main/packages/app-state) | Client-side application state: Zustand stores, sync hooks, notification decisions. |
+| [`assistant-data`](https://github.com/seandearnaley/brainstrike/tree/main/packages/assistant-data) | Renderer-safe data contracts and helpers for threads, groups, usage and cost. |
+| [`storage`](https://github.com/seandearnaley/brainstrike/tree/main/packages/storage) | The renderer's own durable stores. Separate from the host's state database and the run log. |
+| [`token-cache`](https://github.com/seandearnaley/brainstrike/tree/main/packages/token-cache) | A persistent token-count cache with a background worker, for the Explorer. |
+| [`file-tree-worker`](https://github.com/seandearnaley/brainstrike/tree/main/packages/file-tree-worker) | A web worker for file tree operations off the main thread. |
+| [`worker-runtime`](https://github.com/seandearnaley/brainstrike/tree/main/packages/worker-runtime) | Shared worker plumbing used by the two workers above. |
+
+### Contracts
+
+| Package | What it owns |
+| --- | --- |
+| [`assistant-contract`](https://github.com/seandearnaley/brainstrike/tree/main/packages/assistant-contract) | The types both sides agree on, and the provider and model catalog. |
+| [`types`](https://github.com/seandearnaley/brainstrike/tree/main/packages/types) | Shared contracts and constants for filesystem handles, Explorer state and changesets. |
+| [`mcp-app-host`](https://github.com/seandearnaley/brainstrike/tree/main/packages/mcp-app-host) | Contracts for the MCP Apps extension. |
+| [`mcp-tasks-extension`](https://github.com/seandearnaley/brainstrike/tree/main/packages/mcp-tasks-extension) | Pinned schemas and parsers for the MCP Tasks extension. |
+
+### Agent host
+
+| Package | What it owns |
+| --- | --- |
+| [`agent-host`](https://github.com/seandearnaley/brainstrike/tree/main/packages/agent-host) | The host itself: run execution, admission, approvals, auto-review, subagents and the client protocol. |
+| [`host-capabilities`](https://github.com/seandearnaley/brainstrike/tree/main/packages/host-capabilities) | The Node adapters every host composes: credentials, provider auth, tools, MCP, policy, hooks and workspace services. |
+| [`agent`](https://github.com/seandearnaley/brainstrike/tree/main/packages/agent) | Provider, request, tool, MCP and memory adapters. |
+| [`assistant-service`](https://github.com/seandearnaley/brainstrike/tree/main/packages/assistant-service) | Node workspace services and the ports for MCP content and credential projection. |
+| [`host-lease`](https://github.com/seandearnaley/brainstrike/tree/main/packages/host-lease) | Finding the host for a data folder, and the lease that guarantees there is only one. |
+
+### Durable state
+
+| Package | What it owns |
+| --- | --- |
+| [`state-store`](https://github.com/seandearnaley/brainstrike/tree/main/packages/state-store) | The SQLite state database: the run log and the small authoritative tables, written by one worker thread. |
+| [`indexer`](https://github.com/seandearnaley/brainstrike/tree/main/packages/indexer) | The host state index: a derived, rebuildable full-text projection of the state log. |
+
+### Platform and native
+
+| Package | What it owns |
+| --- | --- |
+| [`secure-fs-native`](https://github.com/seandearnaley/brainstrike/tree/main/packages/secure-fs-native) | A native add-on for descriptor-relative filesystem access inside trusted folders. |
+| [`windows-job-native`](https://github.com/seandearnaley/brainstrike/tree/main/packages/windows-job-native) | A native add-on for Windows Job Objects, so a process tree ends with its owner. |
+| [`file-system`](https://github.com/seandearnaley/brainstrike/tree/main/packages/file-system) | Platform-aware filesystem adapters. |
+| [`platform-utils`](https://github.com/seandearnaley/brainstrike/tree/main/packages/platform-utils) | Platform detection. |
+
+### Foundation
+
+| Package | What it owns |
+| --- | --- |
+| [`effect-kit`](https://github.com/seandearnaley/brainstrike/tree/main/packages/effect-kit) | Shared helpers for the Effect boundary. |
+| [`logging`](https://github.com/seandearnaley/brainstrike/tree/main/packages/logging) | The logger, its buffer, sampling and serializers. |
+| [`tokenization`](https://github.com/seandearnaley/brainstrike/tree/main/packages/tokenization) | Token estimation, cost calculation and lazy tokenization. |
+| [`utils`](https://github.com/seandearnaley/brainstrike/tree/main/packages/utils) | Shared formatting, filtering, path, event and error helpers. |
+| [`config`](https://github.com/seandearnaley/brainstrike/tree/main/packages/config) | Shared configuration for the monorepo. |
+| [`build-utils`](https://github.com/seandearnaley/brainstrike/tree/main/packages/build-utils) | Node-side build helpers and Vite plugins. For build configuration only. |
+
+### Testing
+
+| Package | What it owns |
+| --- | --- |
+| [`test-utils`](https://github.com/seandearnaley/brainstrike/tree/main/packages/test-utils) | Shared test configuration, explicit mocks, recorded fixtures and timeout helpers. |
+| [`agent-evals`](https://github.com/seandearnaley/brainstrike/tree/main/packages/agent-evals) | Coding-task evaluations run through the standalone host and scored by hidden verifiers. |
+| [`mcp-test-lab`](https://github.com/seandearnaley/brainstrike/tree/main/packages/mcp-test-lab) | Deterministic MCP protocol fixtures. |
+| [`file-tree-test-fixtures`](https://github.com/seandearnaley/brainstrike/tree/main/packages/file-tree-test-fixtures) | Fixtures for file tree tests. |
+
+## Finding the code for a feature
+
+| You are looking for | Start in |
+| --- | --- |
+| How a run executes, stops or recovers | [`agent-host`](https://github.com/seandearnaley/brainstrike/tree/main/packages/agent-host) and the [runtime contract](https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/assistant-runtime.md) |
+| A tool the agent can call | [`host-capabilities`](https://github.com/seandearnaley/brainstrike/tree/main/packages/host-capabilities) |
+| The sandbox | The [code execution contract](https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/code-execution.md) |
+| Subagents | The [subagents contract](https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/assistant-subagents.md) |
+| Providers, models and MCP | The [providers contract](https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/assistant-providers.md) |
+| The Changes tab and worktrees | The [changes contract](https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/changeset-diff.md) |
+| The Explorer, Search and the Context map | The [explorer contract](https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/explorer-search-context-map.md) |
+| What is stored and how | [`state-store`](https://github.com/seandearnaley/brainstrike/tree/main/packages/state-store) and its [contract](https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/state-store.md) |
+| Windows, menus, quit and reset | The [platform contract](https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/platform-contracts.md) |
+| Testing against providers without a key | The [provider cassettes contract](https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/provider-cassettes.md) |

@@ -70,3 +70,67 @@ h2,
 h3 {
   letter-spacing: -0.02em;
 }
+
+/*
+ * Diagrams (src/components/Diagram.astro). pele reads its colours from these
+ * variables, and they point at Starlight's tokens, so a diagram follows the
+ * theme without being drawn twice.
+ */
+.pele {
+  --pele-bg: var(--sl-color-bg);
+  --pele-fg: var(--sl-color-white);
+  --pele-muted: var(--sl-color-gray-3);
+  --pele-line: var(--sl-color-gray-3);
+  --pele-surface: var(--sl-color-gray-6);
+  --pele-surface-alt: var(--sl-color-gray-5);
+  --pele-border: var(--sl-color-gray-4);
+  --pele-accent: var(--sl-color-text-accent);
+  --pele-font: var(--__sl-font);
+  --pele-font-mono: var(--__sl-font-mono);
+  --pele-radius: 6px;
+}
+
+.diagram {
+  margin-block: 1.75rem;
+}
+
+.diagram-canvas {
+  overflow-x: auto;
+  padding: 1.25rem 1rem;
+  border: 1px solid var(--sl-color-hairline-light);
+  border-radius: 8px;
+  text-align: center;
+}
+
+.diagram figcaption {
+  margin-top: 0.6rem;
+  color: var(--sl-color-gray-3);
+  font-size: var(--sl-text-sm);
+}
+
+/* A box that opens something in the repository is outlined in the accent colour. */
+.pele a > :is(rect, polygon, path, ellipse, circle):first-of-type {
+  stroke: var(--sl-color-text-accent);
+  stroke-width: 1.5px;
+}
+
+.pele a:is(:hover, :focus-visible) > :is(rect, polygon, path, ellipse, circle):first-of-type {
+  fill: var(--sl-color-gray-5);
+}
+
+.pele a:focus-visible {
+  outline: 2px solid var(--sl-color-text-accent);
+  outline-offset: 3px;
+}
+
+/* On a narrow screen a shrunken diagram is unreadable, so keep it at full size
+   and let it scroll sideways inside its own frame. pele sets max-width inline. */
+@media (max-width: 50rem) {
+  .diagram-canvas {
+    text-align: start;
+  }
+
+  .diagram-canvas > svg.pele {
+    max-width: none !important;
+  }
+}

@@ -1,0 +1,16 @@
+flowchart LR
+  clients([Clients]) -- JSON-RPC --> core[Core]
+  core --> caps[Capabilities]
+  core --> writer[State writer]
+  core --> index[Search indexer]
+  core --> memory[Memory calculator]
+  writer --> db[(State DB)]
+  index --> fts[(Search index)]
+  caps --> kids([Child processes])
+  click core href "https://github.com/seandearnaley/brainstrike/tree/main/packages/agent-host" "packages/agent-host"
+  click caps href "https://github.com/seandearnaley/brainstrike/tree/main/packages/host-capabilities" "packages/host-capabilities"
+  click writer href "https://github.com/seandearnaley/brainstrike/tree/main/packages/state-store" "packages/state-store"
+  click db href "https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/state-store.md" "State store contract"
+  click index href "https://github.com/seandearnaley/brainstrike/tree/main/packages/indexer" "packages/indexer"
+  click fts href "https://github.com/seandearnaley/brainstrike/tree/main/packages/indexer" "packages/indexer"
+  click memory href "https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/state-store.md" "State store contract"

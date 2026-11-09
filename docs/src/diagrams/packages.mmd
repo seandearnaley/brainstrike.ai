@@ -1,0 +1,40 @@
+flowchart TB
+  desktop[apps/desktop]
+  subgraph ui[Interface]
+    shell[app-shell]
+    aui[assistant-ui]
+    kit[ui]
+  end
+  subgraph host[Agent host]
+    hc[host-capabilities]
+    ah[agent-host]
+    agent[agent]
+  end
+  contract[assistant-contract]
+  subgraph state[Durable state]
+    ss[state-store]
+    ix[indexer]
+  end
+  native[Native add-ons]
+  desktop --> shell
+  desktop --> hc
+  shell --> aui
+  aui --> kit
+  aui --> contract
+  hc --> ah
+  hc --> agent
+  ah --> contract
+  ah --> ss
+  ah --> ix
+  ss --> native
+  click desktop href "https://github.com/seandearnaley/brainstrike/tree/main/apps/desktop" "apps/desktop"
+  click shell href "https://github.com/seandearnaley/brainstrike/tree/main/packages/app-shell" "packages/app-shell"
+  click aui href "https://github.com/seandearnaley/brainstrike/tree/main/packages/assistant-ui" "packages/assistant-ui"
+  click kit href "https://github.com/seandearnaley/brainstrike/tree/main/packages/ui" "packages/ui"
+  click contract href "https://github.com/seandearnaley/brainstrike/tree/main/packages/assistant-contract" "packages/assistant-contract"
+  click ah href "https://github.com/seandearnaley/brainstrike/tree/main/packages/agent-host" "packages/agent-host"
+  click hc href "https://github.com/seandearnaley/brainstrike/tree/main/packages/host-capabilities" "packages/host-capabilities"
+  click agent href "https://github.com/seandearnaley/brainstrike/tree/main/packages/agent" "packages/agent"
+  click ss href "https://github.com/seandearnaley/brainstrike/tree/main/packages/state-store" "packages/state-store"
+  click ix href "https://github.com/seandearnaley/brainstrike/tree/main/packages/indexer" "packages/indexer"
+  click native href "https://github.com/seandearnaley/brainstrike/tree/main/packages/secure-fs-native" "packages/secure-fs-native"

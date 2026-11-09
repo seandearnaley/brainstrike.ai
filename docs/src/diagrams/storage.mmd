@@ -1,0 +1,11 @@
+flowchart TB
+  core[Host core] -- every event --> writer[One writer thread]
+  writer --> db[(State DB)]
+  writer -- payloads of 12 KB or more --> blobs[(Blob files)]
+  db -- rebuildable projection --> idx[(Search index)]
+  db -- replayed, then followed --> views[Every view in the app]
+  click writer href "https://github.com/seandearnaley/brainstrike/tree/main/packages/state-store" "packages/state-store"
+  click db href "https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0011-run-log-and-state-store.md" "ADR-0011"
+  click blobs href "https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0011-run-log-and-state-store.md" "ADR-0011"
+  click idx href "https://github.com/seandearnaley/brainstrike/tree/main/packages/indexer" "packages/indexer"
+  click views href "https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/assistant-persistence.md" "Persistence contract"

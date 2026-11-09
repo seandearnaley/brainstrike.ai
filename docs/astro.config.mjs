@@ -33,7 +33,19 @@ export default defineConfig({
       // Add `collapsed: true` to a group that should start closed.
       // The devlog is not listed here: the blog plugin gives it its own header
       // link and sidebar.
-      sidebar: [{ label: 'Start here', items: ['start/overview', 'start/install'] }],
+      sidebar: [
+        { label: 'Start here', items: ['start/overview', 'start/install'] },
+        {
+          label: 'Read the code',
+          items: [
+            'develop',
+            'develop/architecture',
+            'develop/packages',
+            'develop/life-of-a-turn',
+            'develop/decisions',
+          ],
+        },
+      ],
 
       plugins: [
         starlightBlog({

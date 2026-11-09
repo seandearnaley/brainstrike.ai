@@ -1,0 +1,14 @@
+flowchart LR
+  you([You]) -- prompts --> app[Brainstrike]
+  app -- files --> folders[(Your folders)]
+  app -- stdio --> local[Local MCP servers]
+  app -- HTTPS --> providers[Model provider]
+  app -- HTTP --> remote[Remote MCP servers]
+  app -- proxy --> web[The web]
+  app -- updates --> releases[GitHub releases]
+  click providers href "https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/assistant-providers.md" "Providers contract"
+  click local href "https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/mcp-conformance.md" "MCP conformance"
+  click remote href "https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/mcp-conformance.md" "MCP conformance"
+  click web href "https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0025-agent-browsing-egress-proxy.md" "ADR-0025"
+  click releases href "https://github.com/seandearnaley/brainstrike/blob/main/apps/desktop/RELEASES.md" "Release process"
+  click folders href "https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/workspace-context.md" "Workspace contract"

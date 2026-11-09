@@ -1,0 +1,83 @@
+---
+title: Life of a turn
+description: What happens between sending a message and seeing the result, including how a tool call is approved and where a command runs.
+---
+
+import Diagram from '../../../components/Diagram.astro';
+import turn from '../../../diagrams/turn.mmd?raw';
+import approval from '../../../diagrams/approval.mmd?raw';
+import sandbox from '../../../diagrams/sandbox.mmd?raw';
+
+One message from you starts one run in the agent host. This page follows it.
+
+## From message to result
+
+<Diagram
+  code={turn}
+  caption="One turn. The host commits each event to the run log before the interface shows it."
+/>
+
+Three things in this picture explain a lot of the code:
+
+- **Commit comes before display.** The interface never shows something the log does not hold. After a crash or a restart, what you saw is what is stored.
+- **The host owns the loop.** Each run is one [AI SDK](https://ai-sdk.dev) streaming loop. Mastra supplies memory as a library; it does not run a second loop or write a second transcript. See [ADR-0012](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0012-ai-sdk-loop-mastra-memory-library.md).
+- **A decision is an event like any other.** A request for approval and your answer are both committed, so a pending approval survives a restart and any client can answer it.
+
+Where to read the code:
+
+| Step | Source |
+| --- | --- |
+| Running a turn | [`core-run-execution.ts`](https://github.com/seandearnaley/brainstrike/blob/main/packages/agent-host/src/core-run-execution.ts) |
+| Noticing a stalled provider | [`run-stream-watchdog.ts`](https://github.com/seandearnaley/brainstrike/blob/main/packages/agent-host/src/run-stream-watchdog.ts) |
+| Pausing and resuming around a decision | [`run-continuation.ts`](https://github.com/seandearnaley/brainstrike/blob/main/packages/agent-host/src/run-continuation.ts) |
+| Hooks before and after tools | [`host-run-hooks.ts`](https://github.com/seandearnaley/brainstrike/blob/main/packages/host-capabilities/src/hooks/host-run-hooks.ts) |
+
+The rules these files keep are in the [runtime contract](https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/assistant-runtime.md) and [ADR-0009](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0009-host-run-loop-invariants.md).
+
+## How a tool call is decided
+
+Every tool belongs to one of four risk categories: `read`, `edit`, `execute` or `mcp`.
+
+<Diagram
+  code={approval}
+  caption="The path of one tool call through the permission gate. A deny always wins."
+/>
+
+- **A deny beats a grant.** A rule against one tool or a whole category refuses the call whatever else is allowed.
+- **"Allow all this session" is four grants**, one per category. Each can be taken back on its own.
+- **Auto asks a second, quick model** whether a call is routine. That reviewer sees your requests and the agent's tool calls. It never sees tool results or the agent's prose, so text the agent read cannot argue for its own approval. It can approve or hand the call to you; it cannot deny.
+- **Auto is a convenience, not a security boundary.** The decision record says so plainly. See [ADR-0031](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0031-access-modes-and-auto-review.md).
+
+Some requests always come to you, whatever the mode:
+
+- The first time the agent browser visits a new site.
+- A question the agent asks you, and a plan it proposes.
+- In _Ask_ and _Auto_, a command that asks to run outside the sandbox.
+
+Grants, subagents and what happens across a restart are in [ADR-0010](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0010-approvals-and-delegation.md).
+
+## Where a command runs
+
+<Diagram
+  code={sandbox}
+  caption="Where an approved shell command runs."
+/>
+
+Inside the sandbox a command can:
+
+- **write** only in the folder it was started in and in its own temporary folder, which is removed with the command;
+- **read** everything except the credential stores, which are always denied;
+- **reach no network.**
+
+"Anywhere else" means Windows, the host running headless, and long-running command sessions.
+
+- **The sandbox wraps the command, not the agent.** The host's own process owner still starts it, so streaming, output limits and teardown work the same either way.
+- **Not ready means no.** If the sandbox cannot be set up, the command is refused with the reason. It is never run unsandboxed instead.
+- **Reads are not private.** The sandbox confines writes and the network. A command can still read most of your disk, so treat its output as sensitive.
+- **Unsandboxed is never silent.** Where there is no sandbox, the approval card says so before you approve, and the result records it.
+
+The full rules are in the [code execution contract](https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/code-execution.md).
+
+## What a turn leaves behind
+
+When a turn ends, the list of what it changed comes from git's own patch, including side effects of commands. The interface draws that patch and never computes a second diff, so the lines you review are the lines git counted. See [ADR-0036](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0036-git-patch-and-pierre-diffs.md) and the [changes contract](https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/changeset-diff.md).

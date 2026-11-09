@@ -1,0 +1,9 @@
+flowchart TD
+  cmd[An approved shell command] --> where{Where is it running?}
+  where -- macOS or Linux desktop --> ready{Sandbox ready?}
+  where -- anywhere else --> open[Runs unsandboxed, and says so]
+  ready -- yes --> fenced[Runs in the sandbox]
+  ready -- no --> refuse[Refused, with the reason]
+  click ready href "https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/code-execution.md" "Code execution contract"
+  click fenced href "https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/code-execution.md" "Code execution contract"
+  click open href "https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/code-execution.md" "Code execution contract"

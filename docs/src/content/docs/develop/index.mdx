@@ -1,0 +1,44 @@
+---
+title: Read the code
+description: How to find your way around the Brainstrike source, from what it talks to down to the decision behind a single design choice.
+---
+
+Brainstrike shows you what an agent did. These pages do the same for the code: they are maps, drawn at four depths, and every box on a map opens the part of the repository it stands for.
+
+The detail lives next to the code, in the [source repository](https://github.com/seandearnaley/brainstrike). These pages tell you where to look and in what order.
+
+## Four depths
+
+| Depth | Question it answers | Page |
+| --- | --- | --- |
+| 1. Outside | What does Brainstrike talk to? | [Architecture](/develop/architecture/#what-brainstrike-talks-to) |
+| 2. Processes | What runs on my machine, and who owns what? | [Architecture](/develop/architecture/#what-runs-on-your-machine) |
+| 3. Packages | Where is the code for that? | [Packages](/develop/packages/) |
+| 4. Flows | What happens, step by step, when I send a message? | [Life of a turn](/develop/life-of-a-turn/) |
+
+When you want to know why something is built the way it is, go to [Decisions](/develop/decisions/).
+
+## What sits next to the code
+
+The repository carries four kinds of writing. Each has one job.
+
+| Where | What it holds | Read it when |
+| --- | --- | --- |
+| [`docs/adr/`](https://github.com/seandearnaley/brainstrike/tree/main/docs/adr) | Architecture decision records. Each states a decision, what was weighed, and what it costs. They are amended in place, with dates. | You want the reason behind a design. |
+| [`docs/agents/`](https://github.com/seandearnaley/brainstrike/tree/main/docs/agents) | One contract per subsystem: the rules that must keep holding and that the code alone does not make obvious. | You are about to change that subsystem. |
+| Package `README.md` files | What a package owns and what it must not own. | You have found the package and want its boundaries. |
+| [`AGENTS.md`](https://github.com/seandearnaley/brainstrike/blob/main/AGENTS.md) | Working rules for people and coding agents alike. | Before your first change. |
+
+The contracts name their owning source files, so a contract is usually the shortest path from an idea to the file that implements it. Start from the [contract index](https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/README.md).
+
+## Five ideas that explain most of the code
+
+1. **The agent host is a separate process, and the window is a client of it.** The host owns runs, approvals and access to your folders. It has no Electron in it, so the same code runs headless. See [ADR-0017](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0017-cli-first-agent-host.md).
+2. **The run log is the truth.** Only the host writes it, it commits before anything is displayed, and every view is rebuilt from it. See [ADR-0011](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0011-run-log-and-state-store.md).
+3. **Every durable fact has one writer.** Indexes and interface state are projections that can be thrown away and rebuilt.
+4. **Failure is visible.** A sandbox that is not ready refuses the command. A damaged database opens read-only and says so. Nothing falls back silently.
+5. **Features are gated by capabilities that are passed in**, never by checking the platform. See [ADR-0008](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0008-capability-based-feature-gating.md).
+
+## Build it
+
+The [contributing guide](https://github.com/seandearnaley/brainstrike/blob/main/CONTRIBUTING.md) covers the toolchain, the checks to run before a pull request and how changes land.
