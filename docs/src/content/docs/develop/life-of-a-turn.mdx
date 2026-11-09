@@ -51,10 +51,11 @@ Every tool belongs to one of four risk categories: `read`, `edit`, `execute` or 
 Some requests always come to you, whatever the mode:
 
 - The first time the agent browser visits a new site.
+- Internet access for a Python script, every time.
 - A question the agent asks you, and a plan it proposes.
 - In _Ask_ and _Auto_, a command that asks to run outside the sandbox.
 
-Grants, subagents and what happens across a restart are in [ADR-0010](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0010-approvals-and-delegation.md).
+The user-level guide is [Access modes and approvals](/guides/approvals/). Grants, subagents and what happens across a restart are in [ADR-0010](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0010-approvals-and-delegation.md).
 
 ## Where a command runs
 
@@ -76,7 +77,7 @@ Inside the sandbox a command can:
 - **Reads are not private.** The sandbox confines writes and the network. A command can still read most of your disk, so treat its output as sensitive.
 - **Unsandboxed is never silent.** Where there is no sandbox, the approval card says so before you approve, and the result records it.
 
-The full rules are in the [code execution contract](https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/code-execution.md).
+The user-level guide is [Sandbox and platform support](/guides/sandbox/). The full rules are in the [code execution contract](https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/code-execution.md).
 
 ## What a turn leaves behind
 
