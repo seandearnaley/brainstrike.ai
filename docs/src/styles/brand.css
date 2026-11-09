@@ -1,0 +1,72 @@
+/*
+ * The Brainstrike identity on Starlight's theme tokens: ultramarine #000cde,
+ * chartreuse #d0fb07, Instrument Sans and Geist Mono, as on brainstrike.ai.
+ * Starlight inverts its grey ramp between themes, so each theme sets the
+ * whole ramp. `--sl-color-white` is the heading colour and `--sl-color-black`
+ * the page background in both.
+ */
+@font-face {
+  font-family: 'Instrument Sans';
+  src: url('/fonts/instrument-sans.woff2') format('woff2');
+  font-weight: 400 700;
+  font-stretch: 75% 100%;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('/fonts/geist-mono.woff2') format('woff2');
+  font-weight: 400 500;
+  font-display: swap;
+}
+
+:root {
+  --sl-font: 'Instrument Sans';
+  --sl-font-mono: 'Geist Mono';
+}
+
+/* Dark: the landing page's deep ultramarine, with chartreuse for links and the current page. */
+:root,
+::backdrop {
+  --sl-color-white: #f7f8fa;
+  --sl-color-gray-1: #e4e7ff;
+  --sl-color-gray-2: #c3c9ff;
+  --sl-color-gray-3: #8e97e6;
+  --sl-color-gray-4: #5661c9;
+  --sl-color-gray-5: #1a2596;
+  --sl-color-gray-6: #000a6e;
+  --sl-color-black: #00044d;
+
+  --sl-color-accent-low: #00087a;
+  --sl-color-accent: #2b36ff;
+  --sl-color-accent-high: #d0fb07;
+
+  --sl-color-backdrop-overlay: rgb(0 3 50 / 0.66);
+}
+
+/* Light: ultramarine on a cool near-white. Chartreuse is too pale to read here, so it stays out. */
+:root[data-theme='light'],
+[data-theme='light'] ::backdrop {
+  --sl-color-white: #0b1040;
+  --sl-color-gray-1: #151b5a;
+  --sl-color-gray-2: #2a3170;
+  --sl-color-gray-3: #4d547f;
+  --sl-color-gray-4: #8189b8;
+  --sl-color-gray-5: #c5caea;
+  --sl-color-gray-6: #eceefa;
+  --sl-color-gray-7: #f5f6fc;
+  --sl-color-black: #ffffff;
+
+  --sl-color-accent-low: #dfe2ff;
+  --sl-color-accent: #000cde;
+  --sl-color-accent-high: #00087a;
+
+  --sl-color-backdrop-overlay: rgb(77 84 127 / 0.5);
+}
+
+/* The landing page sets headings tight; match it. */
+h1,
+h2,
+h3 {
+  letter-spacing: -0.02em;
+}

@@ -1,0 +1,40 @@
+---
+title: Brainstrike documentation
+description: Install Brainstrike, connect a model provider and learn how to follow, review and steer what an agent does in your folders.
+template: splash
+hero:
+  title: Agents that show their work.
+  tagline: Brainstrike runs agents inside your folders and shows every file they read, search they run and line they change.
+  actions:
+    - text: Install Brainstrike
+      link: /start/install/
+      icon: right-arrow
+    - text: What it does
+      link: /start/overview/
+      variant: minimal
+---
+
+import { CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+<CardGrid>
+  <LinkCard
+    title="What Brainstrike is"
+    description="The thread, the Changes tab, sandboxed commands, and the models and tools you bring."
+    href="/start/overview/"
+  />
+  <LinkCard
+    title="Install"
+    description="Builds for macOS, Windows and Linux, what each one needs, and how to check a download."
+    href="/start/install/"
+  />
+  <LinkCard
+    title="Devlog"
+    description="Building Brainstrike in the open: what changed, what broke and what's next."
+    href="/devlog/"
+  />
+  <LinkCard
+    title="Source code"
+    description="Brainstrike is open source under the MIT license. Read it, build it or open an issue."
+    href="https://github.com/seandearnaley/brainstrike"
+  />
+</CardGrid>

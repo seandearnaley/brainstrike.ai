@@ -35,6 +35,69 @@ left unfilled fails the build. Change `LEGAL_EFFECTIVE` whenever the wording
 changes. Both pages are linked from the footer of every page, on phones too,
 and from the app's Help menu.
 
+## Docs and devlog
+
+`docs/` is a separate project: the documentation and the devlog, served at
+`docs.brainstrike.ai`. It is [Astro](https://astro.build) with
+[Starlight](https://starlight.astro.build), and it has its own `package.json`
+and lockfile, so the landing page above stays dependency-free.
+
+```sh
+cd docs
+npm install
+npm run dev      # http://localhost:4321
+npm run build    # writes docs/dist
+```
+
+- **A docs page** is a Markdown file under `docs/src/content/docs/`. Its path
+  is its URL. `title` is required and `description` feeds search results, link
+  previews and `llms.txt`. Add the page to `sidebar` in
+  `docs/astro.config.mjs`.
+- **A devlog post** is a Markdown file in `docs/src/content/docs/devlog/`,
+  served at `/devlog/<file name>/`:
+
+  ```md
+  ---
+  title: Why the agent asks first
+  date: 2026-11-12
+  excerpt: One or two sentences for the list, the feed and the link preview.
+  tags: [approvals]
+  ---
+  ```
+
+  `title` and `date` are required. `draft: true` keeps a post out of the
+  production build while it still shows in `npm run dev`. The feed is
+  `/devlog/rss.xml`.
+- **The build fails** on a broken internal link or heading anchor, and on
+  front matter that does not match the schema.
+- **Every page gets** a social card at `/og/<path>.png`, an entry in the
+  sitemap and in the Pagefind search index. `llms.txt`, `llms-small.txt` and
+  `llms-full.txt` cover the docs and leave the devlog out.
+- **The look** is `docs/src/styles/brand.css`: the landing page's ultramarine
+  and chartreuse on Starlight's theme tokens, with the same two fonts.
+- The scripts set `TZ=UTC` so a post's date reads the same locally as on
+  Vercel, which builds in UTC.
+
+Vercel serves it from a second project on this repository:
+
+1. Create a project from this repository with **Root Directory** `docs`.
+   Vercel detects Astro; no adapter or `vercel.json` is needed.
+2. Add the domain `docs.brainstrike.ai` to that project.
+3. Optional: set an Ignored Build Step on each project so a post does not
+   rebuild the landing page and a landing change does not rebuild the docs.
+   Docs project: `git diff --quiet HEAD^ HEAD -- .` Landing project:
+   `git diff --quiet HEAD^ HEAD -- . ':!docs'`
+
+"Edit page" links point at this repository on GitHub, so they work for
+visitors only once it is public.
+
+Until the docs project is live, `/notes` below is still the published log.
+Moving over is three changes to the landing page, made together: redirect
+`/notes/feed.xml` to `https://docs.brainstrike.ai/devlog/rss.xml` and
+`/notes/:slug/` to `https://docs.brainstrike.ai/devlog/:slug/`, point the
+header link and the pill at the devlog, then delete `notes/`, `notes.mjs`,
+`test/notes.test.mjs` and the notes rendering in `build.mjs`.
+
 ## Notes
 
 `/notes` is the development log: building Brainstrike in the open. Each note
