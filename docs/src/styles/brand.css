@@ -1,0 +1,136 @@
+/*
+ * The Brainstrike identity on Starlight's theme tokens: ultramarine #000cde,
+ * chartreuse #d0fb07, Instrument Sans and Geist Mono, as on brainstrike.ai.
+ * Starlight inverts its grey ramp between themes, so each theme sets the
+ * whole ramp. `--sl-color-white` is the heading colour and `--sl-color-black`
+ * the page background in both.
+ */
+@font-face {
+  font-family: 'Instrument Sans';
+  src: url('/fonts/instrument-sans.woff2') format('woff2');
+  font-weight: 400 700;
+  font-stretch: 75% 100%;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('/fonts/geist-mono.woff2') format('woff2');
+  font-weight: 400 500;
+  font-display: swap;
+}
+
+:root {
+  --sl-font: 'Instrument Sans';
+  --sl-font-mono: 'Geist Mono';
+}
+
+/* Dark: the landing page's deep ultramarine, with chartreuse for links and the current page. */
+:root,
+::backdrop {
+  --sl-color-white: #f7f8fa;
+  --sl-color-gray-1: #e4e7ff;
+  --sl-color-gray-2: #c3c9ff;
+  --sl-color-gray-3: #8e97e6;
+  --sl-color-gray-4: #5661c9;
+  --sl-color-gray-5: #1a2596;
+  --sl-color-gray-6: #000a6e;
+  --sl-color-black: #00044d;
+
+  --sl-color-accent-low: #00087a;
+  --sl-color-accent: #2b36ff;
+  --sl-color-accent-high: #d0fb07;
+
+  --sl-color-backdrop-overlay: rgb(0 3 50 / 0.66);
+}
+
+/* Light: ultramarine on a cool near-white. Chartreuse is too pale to read here, so it stays out. */
+:root[data-theme='light'],
+[data-theme='light'] ::backdrop {
+  --sl-color-white: #0b1040;
+  --sl-color-gray-1: #151b5a;
+  --sl-color-gray-2: #2a3170;
+  --sl-color-gray-3: #4d547f;
+  --sl-color-gray-4: #8189b8;
+  --sl-color-gray-5: #c5caea;
+  --sl-color-gray-6: #eceefa;
+  --sl-color-gray-7: #f5f6fc;
+  --sl-color-black: #ffffff;
+
+  --sl-color-accent-low: #dfe2ff;
+  --sl-color-accent: #000cde;
+  --sl-color-accent-high: #00087a;
+
+  --sl-color-backdrop-overlay: rgb(77 84 127 / 0.5);
+}
+
+/* The landing page sets headings tight; match it. */
+h1,
+h2,
+h3 {
+  letter-spacing: -0.02em;
+}
+
+/*
+ * Diagrams (src/components/Diagram.astro). pele reads its colours from these
+ * variables, and they point at Starlight's tokens, so a diagram follows the
+ * theme without being drawn twice.
+ */
+.pele {
+  --pele-bg: var(--sl-color-bg);
+  --pele-fg: var(--sl-color-white);
+  --pele-muted: var(--sl-color-gray-3);
+  --pele-line: var(--sl-color-gray-3);
+  --pele-surface: var(--sl-color-gray-6);
+  --pele-surface-alt: var(--sl-color-gray-5);
+  --pele-border: var(--sl-color-gray-4);
+  --pele-accent: var(--sl-color-text-accent);
+  --pele-font: var(--__sl-font);
+  --pele-font-mono: var(--__sl-font-mono);
+  --pele-radius: 6px;
+}
+
+.diagram {
+  margin-block: 1.75rem;
+}
+
+.diagram-canvas {
+  overflow-x: auto;
+  padding: 1.25rem 1rem;
+  border: 1px solid var(--sl-color-hairline-light);
+  border-radius: 8px;
+  text-align: center;
+}
+
+.diagram figcaption {
+  margin-top: 0.6rem;
+  color: var(--sl-color-gray-3);
+  font-size: var(--sl-text-sm);
+}
+
+/* A box that opens something in the repository is outlined in the accent colour. */
+.pele a > :is(rect, polygon, path, ellipse, circle):first-of-type {
+  stroke: var(--sl-color-text-accent);
+  stroke-width: 1.5px;
+}
+
+.pele a:is(:hover, :focus-visible) > :is(rect, polygon, path, ellipse, circle):first-of-type {
+  fill: var(--sl-color-gray-5);
+}
+
+.pele a:focus-visible {
+  outline: 2px solid var(--sl-color-text-accent);
+  outline-offset: 3px;
+}
+
+/* On a narrow screen a shrunken diagram is unreadable, so keep it at full size
+   and let it scroll sideways inside its own frame. pele sets max-width inline. */
+@media (max-width: 50rem) {
+  .diagram-canvas {
+    text-align: start;
+  }
+
+  .diagram-canvas > svg.pele {
+    max-width: none !important;
+  }
+}

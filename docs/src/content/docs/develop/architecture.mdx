@@ -1,0 +1,79 @@
+---
+title: Architecture
+description: What Brainstrike talks to, which processes run on your machine, and which of them owns runs, files, credentials and the database.
+---
+
+import Diagram from '../../../components/Diagram.astro';
+import context from '../../../diagrams/context.mmd?raw';
+import processes from '../../../diagrams/processes.mmd?raw';
+import host from '../../../diagrams/host.mmd?raw';
+import storage from '../../../diagrams/storage.mmd?raw';
+
+Boxes outlined in the accent colour are links. Each opens the package, contract or decision that the box stands for.
+
+## What Brainstrike talks to
+
+<Diagram
+  code={context}
+  caption="Everything Brainstrike reaches outside itself. Model calls go only to the provider you connected."
+/>
+
+- **Your folders.** The agent reads, edits and runs commands only in folders you opened. A folder's own instructions, skills and hooks load only after you trust it. Search is live `ripgrep` over the files; there is no background index of your code.
+- **A model provider.** OpenAI, Anthropic, Google AI Studio, OpenRouter or Amazon Bedrock, with your key. No model runs locally.
+- **MCP servers.** Local ones are child processes that speak over stdio. Remote ones use Streamable HTTP or SSE.
+- **The web.** Agent browser tabs can connect only through a proxy that checks the address each connection resolves to, so a public page cannot redirect the agent onto your local network.
+- **GitHub releases.** The app checks for updates there. It sends no telemetry.
+
+## What runs on your machine
+
+<Diagram
+  code={processes}
+  caption="The processes of a running app. Arrows show who starts or calls whom."
+/>
+
+Main starts the agent host and the egress proxy. The renderer talks to the host directly, without going through Main. Everything that touches your files or runs a program is the host or one of its children.
+
+### Inside the agent host
+
+<Diagram
+  code={host}
+  caption="The agent host. Core decides, capabilities act, and one thread writes."
+/>
+
+The host's clients are the app's windows and, when it runs headless, a command-line client. The three workers are threads inside the host process, not separate processes.
+
+| Part | What it owns | Read more |
+| --- | --- | --- |
+| **Main** | Only what needs Electron: windows, menus, dialogs, the tray, the browser pane and the operating system's credential store. It starts the other processes and waits for them to exit. | [ADR-0029](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0029-main-is-a-launcher.md) |
+| **Renderer** | The React interface. It talks to the agent host directly over a message port, as a JSON-RPC client. It writes no durable run state. | [`app-shell`](https://github.com/seandearnaley/brainstrike/tree/main/packages/app-shell), [`assistant-ui`](https://github.com/seandearnaley/brainstrike/tree/main/packages/assistant-ui) |
+| **Agent host: core** | Runs, approvals, subagents, stop and restart. One AI SDK loop per run. | [`agent-host`](https://github.com/seandearnaley/brainstrike/tree/main/packages/agent-host), [runtime contract](https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/assistant-runtime.md) |
+| **Agent host: capabilities** | The tools the agent can call, and the workspace services behind the panels: git and changes, worktrees, terminals, language servers, file watching, MCP and hooks. | [`host-capabilities`](https://github.com/seandearnaley/brainstrike/tree/main/packages/host-capabilities) |
+| **State writer** | The single writer of the SQLite state database, on its own thread. | [`state-store`](https://github.com/seandearnaley/brainstrike/tree/main/packages/state-store), [contract](https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/state-store.md) |
+| **Search indexer** | A full-text index of your threads, derived from the state database and rebuilt from it when needed. | [`indexer`](https://github.com/seandearnaley/brainstrike/tree/main/packages/indexer) |
+| **Memory calculator** | Works out memory updates off the writer thread. It opens no database and writes nothing itself. | [state store contract](https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/state-store.md), [ADR-0013](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0013-observational-memory.md) |
+| **Egress proxy** | The only route out for agent browser tabs. | [ADR-0025](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0025-agent-browsing-egress-proxy.md) |
+| **Child processes** | Sandboxed commands and Python, stdio MCP servers, git, ripgrep, language servers and terminals. All are started through one supervisor. | [ADR-0030](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0030-one-process-supervisor.md), [code execution](https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/code-execution.md) |
+
+### Why it is split this way
+
+- **A crash in native code ends the host, not the app.** File watchers, terminals and language servers run in the host. If one takes the process down, the window stays, the host restarts and interrupted runs are recovered.
+- **The host can run without a window.** Closing the last window leaves the app in the Dock, or in the tray where the system has one, so a run keeps going. See [ADR-0033](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0033-host-outlives-the-window.md).
+- **The same host runs headless.** The desktop app starts it as an Electron utility process. A command-line client runs the same bundle under plain Node and attaches over a socket. See [ADR-0017](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0017-cli-first-agent-host.md).
+- **One host per data folder.** The host takes a lock on its data folder. A second host that finds the lock held is refused, never allowed to share the database. See the [host lease contract](https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/host-lease.md).
+- **A process is gone when the operating system says so.** Quit closes children in dependency order and waits for each real exit. See [ADR-0030](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0030-one-process-supervisor.md).
+
+## Where state lives
+
+<Diagram
+  code={storage}
+  caption="Every event goes through one writer. Everything you see is rebuilt from what it committed."
+/>
+
+- **The run log is append-only**, one per thread, in a SQLite database. The host commits an event before the interface shows it.
+- **Each view is a fold of the log.** The interface replays committed events, then follows new ones. It never holds a second copy of the truth.
+- **Large payloads move to blob files** named by their content, with a preview left in the row.
+- **The search index is a projection.** If its schema changes or it is damaged, the host deletes it and rebuilds it from the state database.
+- **Damage is contained.** A database that fails its integrity check opens read-only and the app says so. It is never deleted or replaced for you.
+- **Credentials are separate.** Provider keys and MCP tokens sit in one file, each value sealed by the operating system's credential store. See [desktop security](https://github.com/seandearnaley/brainstrike/blob/main/apps/desktop/SECURITY.md).
+
+The decision and its measurements are in [ADR-0011](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0011-run-log-and-state-store.md).

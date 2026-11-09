@@ -1,0 +1,18 @@
+flowchart TD
+  call[The model calls a tool] --> deny{Denied by a tool or category rule?}
+  deny -- yes --> refused[Not run. The model reads why.]
+  deny -- no --> grant{Already allowed by policy or a session grant?}
+  grant -- yes --> run[The call runs]
+  grant -- no --> mode{Access mode}
+  mode -- Full access --> run
+  mode -- Ask for approval --> card[Approval card]
+  mode -- Auto --> review[A quick model reviews the call]
+  review -- approves --> run
+  review -- flags it, or fails --> card
+  card -- you allow --> run
+  card -- you deny --> refused
+  click deny href "https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0010-approvals-and-delegation.md" "ADR-0010"
+  click grant href "https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0010-approvals-and-delegation.md" "ADR-0010"
+  click mode href "https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0031-access-modes-and-auto-review.md" "ADR-0031"
+  click review href "https://github.com/seandearnaley/brainstrike/blob/main/packages/agent-host/src/auto-review.ts" "auto-review.ts"
+  click card href "https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/assistant-runtime.md" "Runtime contract"

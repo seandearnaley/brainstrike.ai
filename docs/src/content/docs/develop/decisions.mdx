@@ -1,0 +1,90 @@
+---
+title: Decisions
+description: The architecture decision records behind Brainstrike, grouped by the question each one answers, with links to the records in the repository.
+---
+
+Each significant design choice in Brainstrike has an architecture decision record. A record states the decision, what else was weighed, what was measured and what it costs. Records are amended in place with a date when a later decision changes them, so read the status lines at the top.
+
+The records live in [`docs/adr/`](https://github.com/seandearnaley/brainstrike/tree/main/docs/adr). This page groups them by the question they answer.
+
+## How is the app split into processes?
+
+- [ADR-0017](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0017-cli-first-agent-host.md): The agent host is its own process with no Electron in it. The window is one client.
+- [ADR-0029](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0029-main-is-a-launcher.md): Main does only what needs Electron. Workspace services live in the host.
+- [ADR-0033](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0033-host-outlives-the-window.md): Closing the window does not stop a run.
+- [ADR-0030](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0030-one-process-supervisor.md): One supervisor starts every child. A process is gone when the operating system says so.
+- [ADR-0026 (lifecycle)](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0026-lifecycle-readiness-liveness-joined-quit.md): Readiness is a message, liveness is an exit, and quit waits for both.
+- [ADR-0027](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0027-canonical-electron-quit.md): The one way the Electron app quits.
+- [ADR-0005](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0005-desktop-composition-root.md): How the desktop app composes its services.
+
+## How does a run work?
+
+- [ADR-0012](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0012-ai-sdk-loop-mastra-memory-library.md): One AI SDK loop per run. Mastra is a memory library, not a second loop.
+- [ADR-0009](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0009-host-run-loop-invariants.md): The rules any run loop must keep: clock, watchdog, error finishes, tool guards.
+- [ADR-0023](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0023-host-owns-its-tool-representation.md): The host owns how tools are described to a model.
+- [ADR-0019](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0019-host-thread-run-selection.md): Which run a thread shows.
+- [ADR-0013](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0013-observational-memory.md): Observational memory: which model observes, who pays, and what rewind does.
+- [ADR-0001](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0001-coding-agent-stay-bespoke.md): Why the coding-agent abilities are built in-house.
+
+## How do subagents work?
+
+- [ADR-0028](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0028-cross-host-subagents.md): Subagents, sessions and messaging between agents.
+- [ADR-0037](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0037-subagents-choose-their-model.md): A subagent runs on the model its delegation names.
+
+## What is stored, and what can be lost?
+
+- [ADR-0011](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0011-run-log-and-state-store.md): The run log is the truth, in a SQLite state database with one writer.
+- [ADR-0018](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0018-derived-sqlite-indexer.md): Indexes are derived and isolated from the truth.
+- [ADR-0020](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0020-greenfield-data-lifecycle.md): No migrations from older data. What reset must clear.
+- [ADR-0002](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0002-durable-and-ephemeral-queues.md): Two queues: durable orchestration and throwaway compute.
+
+## What is the agent allowed to do?
+
+- [ADR-0031](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0031-access-modes-and-auto-review.md): Ask, Auto and Full access, and how the Auto reviewer works.
+- [ADR-0010](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0010-approvals-and-delegation.md): Grants, denies, delegation to subagents and behaviour across a restart.
+- [ADR-0032](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0032-workspace-trust.md): A folder's instructions, skills and hooks load only after you trust it.
+- [ADR-0016](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0016-workspace-trust-and-ignore-chain.md): One ignore chain decides what the agent may read.
+- [ADR-0025](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0025-agent-browsing-egress-proxy.md): Agent browser tabs connect only through an address-checking proxy.
+- [ADR-0003](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0003-mode-two-full-isolation-vm.md): Full isolation in a virtual machine. A decision, not yet a shipped feature.
+- [ADR-0014](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0014-provider-credentials-and-openai-storage.md): Provider credentials, OAuth and what OpenAI is asked to store.
+
+## How does it work with my repository?
+
+- [ADR-0034](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0034-worktrees-are-thread-checkouts.md): A worktree is a thread's checkout, not another open folder.
+- [ADR-0036](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0036-git-patch-and-pierre-diffs.md): Git's own patch is the diff. The interface only draws it.
+- [ADR-0035](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0035-workspace-retrieval-is-live-search.md): Search is live grep. The code index was removed.
+- [ADR-0026 (search)](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0026-two-lane-agent-search.md): The agent's core tools read the disk.
+- [ADR-0021](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0021-thread-context-map-and-explicit-attachment.md): The Context map, and attaching files on purpose.
+
+## How is the code kept maintainable?
+
+- [ADR-0008](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0008-capability-based-feature-gating.md): Features are gated by capabilities passed in, never by platform checks.
+- [ADR-0004](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0004-effect-at-runtime-boundaries.md): Effect is used at runtime boundaries, adopted in stages.
+- [ADR-0024](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0024-effect-adoption-service-and-rpc-boundaries.md): Effect adoption keeps explicit owners for resources and protocols.
+- [ADR-0015](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0015-desktop-platform-ipc-reset-diagnostics.md): IPC authorization, the factory-reset registry and diagnostics.
+- [ADR-0006](https://github.com/seandearnaley/brainstrike/blob/main/docs/adr/0006-scoped-desktop-maintenance.md): Scoped maintenance triggers in the desktop app.
+
+Two records share the number 0026, and the numbers 0007 and 0022 are unused.
+
+## Contracts
+
+A decision record says why. A contract says what must keep holding now. There is one per subsystem, and each names the source files that own it.
+
+| Working on | Contract |
+| --- | --- |
+| Run admission, streaming and Stop | [Runtime](https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/assistant-runtime.md) |
+| Logs, hydration and memory | [Persistence](https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/assistant-persistence.md) |
+| Providers, credentials and MCP | [Providers](https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/assistant-providers.md), [provider cassettes](https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/provider-cassettes.md) |
+| Child runs and how a parent continues | [Subagents](https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/assistant-subagents.md) |
+| The state database, its search index and the host lock | [State store](https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/state-store.md), [host lease](https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/host-lease.md) |
+| Workspace instructions, folders and edits | [Workspace](https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/workspace-context.md) |
+| Explorer, Search and the Context map | [Explorer](https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/explorer-search-context-map.md) |
+| Git changes and worktrees | [Changes](https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/changeset-diff.md) |
+| Shared interface, menus and reload | [Interface conventions](https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/ui-conventions.md) |
+| IPC, logging, reset and quit | [Platform](https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/platform-contracts.md), [diagnostics privacy](https://github.com/seandearnaley/brainstrike/blob/main/docs/diagnostics-privacy-contract.md) |
+| Sandboxed code execution | [Code execution](https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/code-execution.md) |
+| Effect and Mastra boundaries | [Effect](https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/effect-boundary.md), [Mastra](https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/mastra-boundary.md) |
+| MCP protocol qualification | [MCP conformance](https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/mcp-conformance.md) |
+| Agent evaluation tasks | [Evals](https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/agent-evals.md) |
+
+The repository's own [contract index](https://github.com/seandearnaley/brainstrike/blob/main/docs/agents/README.md) is the source for this table.
