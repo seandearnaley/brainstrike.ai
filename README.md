@@ -53,6 +53,15 @@ not `api/`, so Vercel does not deploy them as functions.
 
 ## The page
 
+- Brainstrike is open source (MIT), and the page says so as loudly as it
+  offers the download. Beside the big button sits **Open source on GitHub**,
+  the same size in glass, linking to
+  [seandearnaley/brainstrike](https://github.com/seandearnaley/brainstrike).
+  The header of every page carries a GitHub pill (just the mark on a phone),
+  and every footer starts with the source code and the MIT license. On a
+  phone the source button comes after the list of builds. **Report a bug**
+  opens the source repository's issues; the builds stay on
+  brainstrike-releases.
 - The big button names the visitor's build, from the browser's platform
   hints; the other builds sit beside it. Under it, one line says what that
   build needs: macOS 12 or later; Windows 10 or 11, the SmartScreen warning
