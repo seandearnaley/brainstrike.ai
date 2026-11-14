@@ -18,7 +18,7 @@ export const { getStaticPaths, GET } = await OGImageRoute({
     ],
     border: { color: [208, 251, 7], width: 14, side: 'inline-start' },
     padding: 72,
-    fonts: ['./public/fonts/instrument-sans.woff2'],
+    fonts: ['./src/assets/fonts/instrument-sans.woff2'],
     font: {
       title: { color: [247, 248, 250], size: 68, lineHeight: 1.1, weight: 'Bold', families: ['Instrument Sans'] },
       description: { color: [195, 201, 255], size: 34, lineHeight: 1.35, families: ['Instrument Sans'] },

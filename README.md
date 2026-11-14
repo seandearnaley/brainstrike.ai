@@ -75,7 +75,9 @@ npm run build    # writes docs/dist
   SVG with no JavaScript, coloured by the variables in `brand.css`. Give a
   node a link with `click <id> href "<url>"`; linked boxes are outlined in the
   accent colour. Keep a diagram under about 620 wide so it shows at full size,
-  and split one that grows past that into two levels.
+  and split one that grows past that into two levels. Its `caption` is not
+  shown: screen readers read it, and it stands in for the diagram in
+  `llms-full.txt`.
 - **Read the code** (`docs/src/content/docs/develop/`) maps the app's source
   and links into `seandearnaley/brainstrike` on `main`. Those links are not
   checked by the build, so check them when files move there.
@@ -85,7 +87,11 @@ npm run build    # writes docs/dist
   sitemap and in the Pagefind search index. `llms.txt`, `llms-small.txt` and
   `llms-full.txt` cover the docs and leave the devlog out.
 - **The look** is `docs/src/styles/brand.css`: the landing page's ultramarine
-  and chartreuse on Starlight's theme tokens, with the same two fonts.
+  and chartreuse on Starlight's theme tokens, with the same two fonts. The
+  fonts live in `docs/src/assets/fonts/` and load through Astro's Fonts API
+  (`fonts` in `docs/astro.config.mjs`): hashed URLs cached for a year,
+  preloaded, with metric-matched fallbacks and `font-display: optional`, so
+  text never re-renders in a second font as a page opens.
 - The scripts set `TZ=UTC` so a post's date reads the same locally as on
   Vercel, which builds in UTC.
 

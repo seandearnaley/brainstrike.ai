@@ -9,8 +9,6 @@ import processes from '../../../diagrams/processes.mmd?raw';
 import host from '../../../diagrams/host.mmd?raw';
 import storage from '../../../diagrams/storage.mmd?raw';
 
-Boxes outlined in the accent colour are links. Each opens the package, contract or decision that the box stands for.
-
 ## What Brainstrike talks to
 
 <Diagram
@@ -19,7 +17,7 @@ Boxes outlined in the accent colour are links. Each opens the package, contract 
 />
 
 - **Your folders.** The agent reads, edits and runs commands only in folders you opened. A folder's own instructions, skills, slash commands and subagents load only after you trust it, and its hooks need a separate approval. Search is live `ripgrep` over the files; there is no background index of your code.
-- **A model provider.** OpenAI, Anthropic, Google AI Studio, OpenRouter or Amazon Bedrock, with your key. No model runs locally.
+- **A model provider.** OpenAI, Anthropic, Google AI Studio, OpenRouter or Amazon Bedrock, with your key. Model calls go only to the provider you connected, and no model runs locally.
 - **MCP servers.** Local ones are child processes that speak over stdio. Remote ones use Streamable HTTP or SSE.
 - **The web.** Agent browser tabs can connect only through a proxy that checks the address each connection resolves to, so a public page cannot redirect the agent onto your local network.
 - **GitHub releases.** The app checks for updates there. It sends no telemetry. [Privacy and your data](/reference/privacy/) lists every request the app makes.
