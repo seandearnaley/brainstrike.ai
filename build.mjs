@@ -1,5 +1,5 @@
 // Writes dist/, the Brainstrike landing page: dist/index.html plus everything
-// in public/ (the WebGL2 backdrop, its synth, the fonts and the icons).
+// in public/ (the WebGL2 backdrop, its synth and the icons), and the fonts.
 //
 // The page is built from the newest published release (prereleases included)
 // of seandearnaley/brainstrike-releases that carries a release-manifest.json
@@ -26,12 +26,31 @@
 //   RELEASE_MANIFEST_FILE  optional; render this local manifest file instead of
 //                          reading GitHub, to preview the download state. The
 //                          page then links to the notes instead of showing them.
+import { createHash } from 'node:crypto';
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 const DIST = path.join(import.meta.dirname, 'dist');
 const PUBLIC = path.join(import.meta.dirname, 'public');
 const LEGAL = path.join(import.meta.dirname, 'legal');
+
+// The fonts (fonts/, both OFL) are written to dist/fonts/ under names that
+// carry a hash of their contents, and every page preloads them. vercel.json
+// lets browsers keep anything in /fonts/ for a year, so a page opened again
+// reads them from cache instead of asking the server, and its text never
+// redraws in a second font. A changed font gets a new name.
+const FONTS = path.join(import.meta.dirname, 'fonts');
+const FONT_FILES = Object.fromEntries(
+  Object.entries({ mono: 'geist-mono.woff2', sans: 'instrument-sans.woff2' }).map(([key, file]) => {
+    const hash = createHash('sha256').update(readFileSync(path.join(FONTS, file))).digest('hex').slice(0, 12);
+    return [key, { file, url: `/fonts/${path.basename(file, '.woff2')}.${hash}.woff2` }];
+  })
+);
+const FONT_FACES = `@font-face { font-family: 'Instrument Sans'; src: url('${FONT_FILES.sans.url}') format('woff2'); font-weight: 400 700; font-stretch: 75% 100%; font-display: swap; }
+@font-face { font-family: 'Geist Mono'; src: url('${FONT_FILES.mono.url}') format('woff2'); font-weight: 400 500; font-display: swap; }`;
+const FONT_PRELOADS = Object.values(FONT_FILES)
+  .map(({ url }) => `<link rel="preload" href="${url}" as="font" type="font/woff2" crossorigin>`)
+  .join('\n');
 
 // The documentation and the devlog live at docs.brainstrike.ai (docs/ in this
 // repository). Every page links to both and advertises the devlog's feed.
@@ -506,8 +525,7 @@ const VIDEO_DIALOG = `<dialog id="video" class="video-dialog" closedby="any" ari
 </dialog>`;
 
 const STYLES = `
-@font-face { font-family: 'Instrument Sans'; src: url('/fonts/instrument-sans.woff2') format('woff2'); font-weight: 400 700; font-stretch: 75% 100%; font-display: swap; }
-@font-face { font-family: 'Geist Mono'; src: url('/fonts/geist-mono.woff2') format('woff2'); font-weight: 400 500; font-display: swap; }
+${FONT_FACES}
 :root {
   color-scheme: dark;
   --blue: #000cde;
@@ -805,8 +823,7 @@ const LEGAL_LINKS =
 const OPEN_LINKS = `<a class="legal" href="${REPO_URL}">Source code</a><a class="legal" href="${LICENSE_URL}">MIT license</a>`;
 
 const LEGAL_STYLES = `
-@font-face { font-family: 'Instrument Sans'; src: url('/fonts/instrument-sans.woff2') format('woff2'); font-weight: 400 700; font-stretch: 75% 100%; font-display: swap; }
-@font-face { font-family: 'Geist Mono'; src: url('/fonts/geist-mono.woff2') format('woff2'); font-weight: 400 500; font-display: swap; }
+${FONT_FACES}
 :root { color-scheme: dark; --blue: #000cde; --deep: #00055f; --volt: #d0fb07; --ink: #f7f8fa; --ink-soft: rgb(247 248 250 / 0.82); --dim: rgb(247 248 250 / 0.6); --line: rgb(247 248 250 / 0.16); --sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif; --mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace; --gutter: clamp(16px, 3.6vw, 56px); }
 * { box-sizing: border-box; }
 html { background: var(--deep); }
@@ -862,6 +879,7 @@ function renderSubpage({ body, description, route, script = '', title }) {
 <link rel="icon" href="/favicon.ico" sizes="any">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+${FONT_PRELOADS}
 ${FEED_LINK}
 <style>${LEGAL_STYLES}</style>
 </head>
@@ -978,7 +996,7 @@ function renderPage(manifest, notes) {
 <link rel="icon" href="/favicon.ico" sizes="any">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-<link rel="preload" href="/fonts/instrument-sans.woff2" as="font" type="font/woff2" crossorigin>
+${FONT_PRELOADS}
 ${FEED_LINK}
 <style>${STYLES}</style>
 ${UMAMI_SCRIPT}
@@ -1019,6 +1037,8 @@ try {
   rmSync(DIST, { force: true, recursive: true });
   mkdirSync(DIST);
   cpSync(PUBLIC, DIST, { recursive: true });
+  mkdirSync(path.join(DIST, 'fonts'));
+  for (const { file, url } of Object.values(FONT_FILES)) cpSync(path.join(FONTS, file), path.join(DIST, url));
   writeFileSync(path.join(DIST, 'index.html'), renderPage(manifest, notes));
   for (const page of LEGAL_PAGES) {
     mkdirSync(path.join(DIST, page.route));
