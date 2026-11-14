@@ -11,7 +11,8 @@ import { render } from 'pele';
 interface Props {
   /** Mermaid source, usually imported from src/diagrams/<name>.mmd?raw. */
   code: string;
-  /** What the diagram shows, in one sentence. Also read by screen readers. */
+  /** What the diagram shows. Not shown on the page: it names the figure for
+   * screen readers and stands in for the diagram in llms-full.txt. */
   caption: string;
 }
 
@@ -28,5 +29,5 @@ const { svg } = render(code, {
 
 <figure class="diagram not-content">
   <div class="diagram-canvas" set:html={svg} />
-  <figcaption>{caption}</figcaption>
+  <figcaption class="sr-only">{caption}</figcaption>
 </figure>

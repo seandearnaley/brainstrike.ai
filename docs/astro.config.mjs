@@ -1,6 +1,6 @@
 // @ts-check
 import starlight from '@astrojs/starlight';
-import { defineConfig } from 'astro/config';
+import { defineConfig, fontProviders } from 'astro/config';
 import starlightBlog from 'starlight-blog';
 import starlightLinksValidator from 'starlight-links-validator';
 import starlightLlmsTxt from 'starlight-llms-txt';
@@ -12,6 +12,44 @@ const SITE_REPO = 'https://github.com/seandearnaley/brainstrike.ai';
 export default defineConfig({
   site: SITE,
   trailingSlash: 'always',
+  // Astro serves the fonts from /_astro/fonts/ under hashed names, cached for a
+  // year, and src/components/Head.astro preloads them. `optional` means text
+  // never re-renders in a second font: a page that paints before a font
+  // arrives keeps the metric-matched fallback Astro generates.
+  fonts: [
+    {
+      provider: fontProviders.local(),
+      name: 'Instrument Sans',
+      cssVariable: '--font-instrument-sans',
+      options: {
+        variants: [
+          {
+            src: ['./src/assets/fonts/instrument-sans.woff2'],
+            weight: '400 700',
+            stretch: '75% 100%',
+            style: 'normal',
+            display: 'optional',
+          },
+        ],
+      },
+    },
+    {
+      provider: fontProviders.local(),
+      name: 'Geist Mono',
+      cssVariable: '--font-geist-mono',
+      fallbacks: ['monospace'],
+      options: {
+        variants: [
+          {
+            src: ['./src/assets/fonts/geist-mono.woff2'],
+            weight: '400 500',
+            style: 'normal',
+            display: 'optional',
+          },
+        ],
+      },
+    },
+  ],
   integrations: [
     starlight({
       title: 'Brainstrike',
@@ -22,6 +60,7 @@ export default defineConfig({
       social: [{ icon: 'github', label: 'GitHub', href: APP_REPO }],
       editLink: { baseUrl: `${SITE_REPO}/edit/main/docs/` },
       customCss: ['./src/styles/brand.css'],
+      components: { Head: './src/components/Head.astro' },
       // Adds a per-page social card to every page's <head>.
       routeMiddleware: './src/routeData.ts',
       head: [{ tag: 'meta', attrs: { name: 'theme-color', content: '#000cde' } }],
