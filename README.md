@@ -183,7 +183,9 @@ not `api/`, so Vercel does not deploy them as functions.
 - The colours, favicon and social card come from the Brainstrike identity
   pack: ultramarine `#000CDE`, close to the web's original link blue, and
   chartreuse `#D0FB07`. The type is Instrument Sans with Geist Mono for the
-  log, both OFL and served from `public/fonts/`.
+  log, both OFL. They live in `fonts/`; the build writes them to `/fonts/`
+  under names that carry a hash of their contents, every page preloads them,
+  and `vercel.json` lets browsers cache `/fonts/` for a year.
 
 ## Environment
 
