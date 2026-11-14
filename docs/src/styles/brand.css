@@ -3,26 +3,12 @@
  * chartreuse #d0fb07, Instrument Sans and Geist Mono, as on brainstrike.ai.
  * Starlight inverts its grey ramp between themes, so each theme sets the
  * whole ramp. `--sl-color-white` is the heading colour and `--sl-color-black`
- * the page background in both.
+ * the page background in both. The font variables come from the `fonts`
+ * option in astro.config.mjs.
  */
-@font-face {
-  font-family: 'Instrument Sans';
-  src: url('/fonts/instrument-sans.woff2') format('woff2');
-  font-weight: 400 700;
-  font-stretch: 75% 100%;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'Geist Mono';
-  src: url('/fonts/geist-mono.woff2') format('woff2');
-  font-weight: 400 500;
-  font-display: swap;
-}
-
 :root {
-  --sl-font: 'Instrument Sans';
-  --sl-font-mono: 'Geist Mono';
+  --sl-font: var(--font-instrument-sans);
+  --sl-font-mono: var(--font-geist-mono);
 }
 
 /* Dark: the landing page's deep ultramarine, with chartreuse for links and the current page. */
@@ -100,12 +86,6 @@ h3 {
   border: 1px solid var(--sl-color-hairline-light);
   border-radius: 8px;
   text-align: center;
-}
-
-.diagram figcaption {
-  margin-top: 0.6rem;
-  color: var(--sl-color-gray-3);
-  font-size: var(--sl-text-sm);
 }
 
 /* A box that opens something in the repository is outlined in the accent colour. */
